@@ -69,14 +69,15 @@
   function parseCSV(text) {
     var lines = text.trim().split(/\r?\n/);
     if (lines.length < 2) return [];
-    var headers = parseCSVLine(lines[0]);
+    var rawHeaders = parseCSVLine(lines[0]);
+    var headers = rawHeaders.map(function (h) { return h.trim(); });
     var rows = [];
     for (var i = 1; i < lines.length; i++) {
       var vals = parseCSVLine(lines[i]);
       if (vals.length < 2) continue;
       var obj = {};
       for (var j = 0; j < headers.length; j++) {
-        obj[headers[j].trim().toLowerCase()] = (vals[j] || "").trim();
+        obj[headers[j]] = (vals[j] || "").trim();
       }
       rows.push(obj);
     }

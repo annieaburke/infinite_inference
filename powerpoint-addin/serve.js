@@ -6,6 +6,7 @@
  *        openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost"
  *   2. node serve.js
  *   3. Sideload manifest.xml into PowerPoint (Insert → My Add-ins → Upload).
+ *      The add-in is a ContentApp — it embeds as an interactive iframe inside the slide.
  *
  * The server serves the repo root so both /webapp/* and /powerpoint-addin/* are accessible.
  */
@@ -60,7 +61,7 @@ if (useHTTPS) {
   https.createServer(opts, handler).listen(PORT, function () {
     console.log("HTTPS server running at https://localhost:" + PORT);
     console.log("  Webapp:   https://localhost:" + PORT + "/webapp/index.html");
-    console.log("  Taskpane: https://localhost:" + PORT + "/powerpoint-addin/taskpane.html");
+    console.log("  Content:  https://localhost:" + PORT + "/powerpoint-addin/content.html");
   });
 } else {
   var http = require("http");

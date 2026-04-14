@@ -3,95 +3,87 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Scatterplot Map — PowerPoint Add-in</title>
+  <title>Scatterplot Map</title>
 
-  <!-- Office.js -->
+  <!-- Office.js — required for content add-ins -->
   <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
 
   <style>
-    /* ── Reset & Layout ─────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       width: 100%; height: 100%; overflow: hidden;
       font-family: "Segoe UI", -apple-system, Helvetica, Arial, sans-serif;
-      background: #f5f6fa; color: #333;
+      background: #f9fafb; color: #333;
     }
     #app { width: 100%; height: 100%; display: flex; flex-direction: column; }
 
-    /* ── Toolbar ─────────────────────────────────────────────── */
+    /* ── Compact toolbar for in-slide use ────────────────────── */
     #toolbar {
-      display: flex; align-items: center; gap: 8px;
-      padding: 6px 10px; background: #fff;
-      border-bottom: 1px solid #dde1e8;
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 8px; background: #fff;
+      border-bottom: 1px solid #e0e3e8;
       flex-shrink: 0; flex-wrap: wrap; z-index: 10;
+      min-height: 32px;
     }
-    .tg { display: flex; align-items: center; gap: 4px; }
-    .tg label { font-size: 12px; font-weight: 600; color: #555; }
+    .tg { display: flex; align-items: center; gap: 3px; }
+    .tg label { font-size: 11px; font-weight: 600; color: #555; white-space: nowrap; }
     #search-input {
-      width: 130px; padding: 4px 6px;
-      border: 1px solid #ccc; border-radius: 3px; font-size: 12px;
+      width: 110px; padding: 3px 5px;
+      border: 1px solid #ccd; border-radius: 3px; font-size: 11px;
     }
     #clear-search {
       background: none; border: none; cursor: pointer;
-      font-size: 14px; color: #999; line-height: 1;
+      font-size: 13px; color: #999; line-height: 1;
     }
     #region-filter {
-      padding: 4px 6px; border: 1px solid #ccc;
-      border-radius: 3px; font-size: 12px; max-width: 110px;
+      padding: 3px 5px; border: 1px solid #ccd;
+      border-radius: 3px; font-size: 11px; max-width: 100px;
     }
     .btn {
-      padding: 4px 8px; border: 1px solid #bbb;
-      border-radius: 3px; background: #fff; cursor: pointer; font-size: 12px;
+      padding: 3px 7px; border: 1px solid #bbb;
+      border-radius: 3px; background: #fff; cursor: pointer; font-size: 11px;
     }
-    .btn:hover { background: #eee; }
+    .btn:hover { background: #f0f0f0; }
     .file-label {
-      display: inline-block; padding: 4px 8px;
+      display: inline-block; padding: 3px 7px;
       border: 1px solid #bbb; border-radius: 3px;
-      background: #fff; cursor: pointer; font-size: 12px; font-weight: 600;
+      background: #fff; cursor: pointer; font-size: 11px; font-weight: 600;
     }
-    .file-label:hover { background: #eee; }
+    .file-label:hover { background: #f0f0f0; }
     #csv-upload { display: none; }
-    #insert-btn {
-      padding: 4px 10px; border: 1px solid #0078d4;
-      border-radius: 3px; background: #0078d4; color: #fff;
-      cursor: pointer; font-size: 12px; font-weight: 600;
-    }
-    #insert-btn:hover { background: #106ebe; }
-    .zoom-display { margin-left: auto; font-size: 11px; color: #666; }
+    .zoom-display { margin-left: auto; font-size: 10px; color: #888; white-space: nowrap; }
 
-    /* ── Canvas ───────────────────────────────────────────────── */
+    /* ── Canvas fills remaining space ────────────────────────── */
     #scatter-canvas { flex: 1; display: block; cursor: grab; }
     #scatter-canvas.dragging { cursor: grabbing; }
 
     /* ── Tooltip ──────────────────────────────────────────────── */
     #tooltip {
-      position: fixed; padding: 6px 10px;
+      position: fixed; padding: 5px 8px;
       background: rgba(30,30,30,0.92); color: #fff;
-      border-radius: 5px; font-size: 11px; line-height: 1.4;
-      pointer-events: none; z-index: 100; max-width: 240px;
+      border-radius: 4px; font-size: 10px; line-height: 1.35;
+      pointer-events: none; z-index: 100; max-width: 220px;
       box-shadow: 0 2px 6px rgba(0,0,0,0.25); white-space: pre-line;
     }
     #tooltip.hidden { display: none; }
 
-    /* ── Detail Panel ────────────────────────────────────────── */
+    /* ── Detail panel (in-slide overlay) ─────────────────────── */
     #detail-panel {
-      position: fixed; top: 50px; right: 8px; width: 240px;
-      max-height: calc(100vh - 60px); overflow-y: auto;
-      background: #fff; border-radius: 6px;
-      box-shadow: 0 3px 14px rgba(0,0,0,0.14); padding: 12px; z-index: 50;
+      position: fixed; top: 40px; right: 6px; width: 200px;
+      max-height: calc(100% - 50px); overflow-y: auto;
+      background: #fff; border-radius: 5px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.14); padding: 10px; z-index: 50;
+      font-size: 11px;
     }
     #detail-panel.hidden { display: none; }
     #close-detail {
-      position: absolute; top: 6px; right: 8px;
-      background: none; border: none; font-size: 18px; cursor: pointer; color: #999;
+      position: absolute; top: 4px; right: 6px;
+      background: none; border: none; font-size: 16px; cursor: pointer; color: #999;
     }
-    #detail-title { font-size: 14px; margin-bottom: 8px; padding-right: 20px; }
-    #detail-body { font-size: 12px; line-height: 1.5; color: #555; }
-    #detail-body .field { margin-bottom: 4px; }
+    #detail-title { font-size: 13px; font-weight: 700; margin-bottom: 6px; padding-right: 18px; }
+    #detail-body { line-height: 1.5; color: #555; }
+    #detail-body .field { margin-bottom: 3px; }
     #detail-body .field-key { font-weight: 600; color: #333; }
-
-    /* ── Status bar ──────────────────────────────────────────── */
-    #status { font-size: 11px; color: #888; padding: 4px 10px; background: #fff; border-top: 1px solid #eee; }
   </style>
 </head>
 <body>
@@ -107,19 +99,16 @@
         <select id="region-filter"><option value="__all__">All</option></select>
       </div>
       <div class="tg">
-        <button class="btn" id="btn-reset-view">Reset</button>
-        <button class="btn" id="btn-zoom-in">+</button>
-        <button class="btn" id="btn-zoom-out">&minus;</button>
+        <button class="btn" id="btn-reset-view" title="Reset view">Reset</button>
+        <button class="btn" id="btn-zoom-in" title="Zoom in">+</button>
+        <button class="btn" id="btn-zoom-out" title="Zoom out">&minus;</button>
       </div>
       <div class="tg">
-        <label for="csv-upload" class="file-label">Import CSV</label>
+        <label for="csv-upload" class="file-label">CSV</label>
         <input type="file" id="csv-upload" accept=".csv">
       </div>
-      <div class="tg">
-        <button id="insert-btn" title="Insert current view as image into the active slide">Insert into Slide</button>
-      </div>
       <div class="tg zoom-display">
-        Zoom: <span id="zoom-level">1.00</span>x
+        <span id="zoom-level">1.00</span>x
       </div>
     </div>
 
@@ -130,23 +119,43 @@
       <h3 id="detail-title"></h3>
       <div id="detail-body"></div>
     </div>
-    <div id="status">Ready</div>
   </div>
 
-  <!-- Reuse the same engine -->
+  <!-- Shared rendering engine -->
   <script src="../webapp/engine.js"></script>
+
   <script>
   "use strict";
-  Office.onReady(function (info) {
-    if (info.host !== Office.HostType.PowerPoint) {
-      document.getElementById("insert-btn").style.display = "none";
-    }
-    init();
-  });
 
-  function init() {
-    var canvas = document.getElementById("scatter-canvas");
-    var engine = new ScatterEngine(canvas);
+  /*
+   * Initialization — works both inside Office (content add-in) and standalone.
+   *
+   * Inside PowerPoint: Office.js calls Office.initialize after the iframe loads.
+   * Standalone preview: We fall back to DOMContentLoaded.
+   * We guard against double-boot with a flag.
+   */
+  var _booted = false;
+
+  if (typeof Office !== "undefined" && Office.initialize !== undefined) {
+    // Office.js is loaded — register the callback. Office runtime will invoke it.
+    Office.initialize = function (reason) {
+      if (!_booted) { _booted = true; boot(); }
+    };
+    // Safety fallback: if Office never fires initialize (e.g. standalone with stubbed Office.js),
+    // boot after DOM is ready with a short delay.
+    document.addEventListener("DOMContentLoaded", function () {
+      setTimeout(function () { if (!_booted) { _booted = true; boot(); } }, 500);
+    });
+  } else {
+    // No Office.js at all — pure standalone
+    document.addEventListener("DOMContentLoaded", function () {
+      if (!_booted) { _booted = true; boot(); }
+    });
+  }
+
+  function boot() {
+    var canvas       = document.getElementById("scatter-canvas");
+    var engine       = new ScatterEngine(canvas);
     var tooltip      = document.getElementById("tooltip");
     var detailPanel  = document.getElementById("detail-panel");
     var detailTitle  = document.getElementById("detail-title");
@@ -154,7 +163,46 @@
     var searchInput  = document.getElementById("search-input");
     var regionFilter = document.getElementById("region-filter");
     var zoomDisplay  = document.getElementById("zoom-level");
-    var status       = document.getElementById("status");
+
+    /* ── Settings persistence via Office.context.document.settings ── */
+    function saveState() {
+      try {
+        if (Office.context && Office.context.document && Office.context.document.settings) {
+          var state = {
+            points: engine.points,
+            regions: engine.regions,
+            axisTitle: engine.axisTitle,
+            cam: engine.cam,
+            worldMinX: engine.worldMinX, worldMaxX: engine.worldMaxX,
+            worldMinY: engine.worldMinY, worldMaxY: engine.worldMaxY
+          };
+          Office.context.document.settings.set("scatterplotState", JSON.stringify(state));
+          Office.context.document.settings.saveAsync();
+        }
+      } catch (e) { /* outside Office context */ }
+    }
+
+    function loadState() {
+      try {
+        if (Office.context && Office.context.document && Office.context.document.settings) {
+          var raw = Office.context.document.settings.get("scatterplotState");
+          if (raw) {
+            var state = JSON.parse(raw);
+            engine.points = state.points || [];
+            engine.regions = state.regions || [];
+            engine.axisTitle = state.axisTitle || { x: "X Axis", y: "Y Axis" };
+            engine.cam = state.cam || { x: 0, y: 0, zoom: 1 };
+            engine.worldMinX = state.worldMinX;
+            engine.worldMaxX = state.worldMaxX;
+            engine.worldMinY = state.worldMinY;
+            engine.worldMaxY = state.worldMaxY;
+            populateRegionFilter();
+            return true;
+          }
+        }
+      } catch (e) { /* outside Office context */ }
+      return false;
+    }
 
     /* ── Demo data ──────────────────────────────────────────── */
     function loadDemoData() {
@@ -182,8 +230,7 @@
       for (var i = 0; i < names.length; i++) {
         points.push({
           x: rand() * 95 + 2, y: rand() * 95 + 2,
-          label: names[i],
-          region: regionNames[i % regionNames.length],
+          label: names[i], region: regionNames[i % regionNames.length],
           color: ["#5b8def","#2ecc71","#e67e22","#9b59b6","#e74c3c"][i % 5],
           priority: (i < 10) ? 1 : (i < 18) ? 2 : 3
         });
@@ -191,21 +238,21 @@
       engine.setPoints(points);
       populateRegionFilter();
       engine.fitAll();
-      render();
     }
 
     /* ── CSV parsing ────────────────────────────────────────── */
     function parseCSV(text) {
       var lines = text.trim().split(/\r?\n/);
       if (lines.length < 2) return [];
-      var headers = parseCSVLine(lines[0]);
+      var rawHeaders = parseCSVLine(lines[0]);
+      var headers = rawHeaders.map(function(h) { return h.trim(); });
       var rows = [];
       for (var i = 1; i < lines.length; i++) {
         var vals = parseCSVLine(lines[i]);
         if (vals.length < 2) continue;
         var obj = {};
         for (var j = 0; j < headers.length; j++) {
-          obj[headers[j].trim().toLowerCase()] = (vals[j] || "").trim();
+          obj[headers[j]] = (vals[j] || "").trim();
         }
         rows.push(obj);
       }
@@ -245,7 +292,7 @@
         if (!xKey && nc.length > 0) xKey = nc[0];
         if (!yKey && nc.length > 1) yKey = nc[1];
       }
-      if (!xKey || !yKey) { status.textContent = "Error: need x and y columns"; return; }
+      if (!xKey || !yKey) return;
       engine.axisTitle.x = xKey;
       engine.axisTitle.y = yKey;
       var colors = ["#5b8def","#2ecc71","#e67e22","#9b59b6","#e74c3c","#1abc9c","#f39c12","#3498db"];
@@ -269,7 +316,7 @@
       engine.setRegions([]);
       populateRegionFilter();
       engine.fitAll();
-      status.textContent = "Loaded " + points.length + " points";
+      saveState();
       render();
     }
     document.getElementById("csv-upload").addEventListener("change", function(e) {
@@ -320,15 +367,20 @@
     function updateZoom() { zoomDisplay.textContent = engine.cam.zoom.toFixed(2); }
 
     /* ── Mouse interaction ──────────────────────────────────── */
-    var isDragging = false; var drag = {x:0, y:0};
+    var isDragging = false; var drag = {x:0, y:0}; var dragMoved = false;
+
     canvas.addEventListener("mousedown", function(e) {
-      isDragging = true; drag.x = e.clientX; drag.y = e.clientY;
+      isDragging = true; dragMoved = false;
+      drag.x = e.clientX; drag.y = e.clientY;
       canvas.classList.add("dragging");
     });
     window.addEventListener("mousemove", function(e) {
       if (isDragging) {
-        engine.pan(e.clientX - drag.x, e.clientY - drag.y);
-        drag.x = e.clientX; drag.y = e.clientY; render(); return;
+        var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragMoved = true;
+        engine.pan(dx, dy);
+        drag.x = e.clientX; drag.y = e.clientY;
+        render(); return;
       }
       var rect = canvas.getBoundingClientRect();
       var mx = e.clientX - rect.left, my = e.clientY - rect.top;
@@ -343,8 +395,11 @@
         canvas.style.cursor = "pointer";
       } else { tooltip.classList.add("hidden"); canvas.style.cursor = isDragging?"grabbing":"grab"; }
     });
-    window.addEventListener("mouseup", function() { isDragging = false; canvas.classList.remove("dragging"); });
+    window.addEventListener("mouseup", function() {
+      isDragging = false; canvas.classList.remove("dragging");
+    });
     canvas.addEventListener("click", function(e) {
+      if (dragMoved) return;   // don't treat drag-end as click
       var rect = canvas.getBoundingClientRect();
       var hit = engine.hitTest(e.clientX - rect.left, e.clientY - rect.top);
       if (hit >= 0) { engine.selectedIndex = hit; showDetail(hit); }
@@ -375,51 +430,63 @@
       var rect = canvas.getBoundingClientRect();
       engine.zoomAt(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.15 : 1/1.15);
       updateZoom(); render();
+      saveState();
     }, {passive:false});
 
-    /* ── Insert into Slide (PowerPoint API) ─────────────────── */
-    document.getElementById("insert-btn").addEventListener("click", function() {
-      // Render current view to a data URL and insert as image
-      engine.draw();  // ensure latest frame
-      var dataUrl = canvas.toDataURL("image/png");
-      // Strip the data:image/png;base64, prefix
-      var base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
-      if (typeof PowerPoint !== "undefined" && PowerPoint.run) {
-        PowerPoint.run(function(context) {
-          var slide = context.presentation.getSelectedSlides().getItemAt(0);
-          var imageOptions = {
-            base64Image: base64,
-            left: 50, top: 50, width: 600, height: 400
-          };
-          slide.shapes.addImage(imageOptions);
-          return context.sync();
-        }).then(function() {
-          status.textContent = "Inserted into slide.";
-        }).catch(function(err) {
-          status.textContent = "Insert error: " + err.message;
-        });
-      } else {
-        // Fallback for Office.js context.document.setSelectedDataAsync
-        Office.context.document.setSelectedDataAsync(
-          base64,
-          { coercionType: Office.CoercionType.Image,
-            imageLeft: 50, imageTop: 50, imageWidth: 600, imageHeight: 400 },
-          function(result) {
-            if (result.status === Office.AsyncResultStatus.Succeeded) {
-              status.textContent = "Inserted into slide.";
-            } else {
-              status.textContent = "Insert error: " + result.error.message;
-            }
-          }
-        );
+    /* ── Touch support ──────────────────────────────────────── */
+    var activeTouches = {}; var lastPinchDist = 0;
+    canvas.addEventListener("touchstart", function(e) {
+      e.preventDefault();
+      for (var i = 0; i < e.changedTouches.length; i++) {
+        var t = e.changedTouches[i];
+        activeTouches[t.identifier] = {x: t.clientX, y: t.clientY};
       }
+      var ids = Object.keys(activeTouches);
+      if (ids.length === 2) {
+        var pts = Object.values(activeTouches);
+        lastPinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      }
+    }, {passive:false});
+    canvas.addEventListener("touchmove", function(e) {
+      e.preventDefault();
+      var ids = Object.keys(activeTouches);
+      if (ids.length === 1) {
+        var t = e.changedTouches[0]; var prev = activeTouches[t.identifier];
+        if (prev) {
+          engine.pan(t.clientX - prev.x, t.clientY - prev.y);
+          activeTouches[t.identifier] = {x: t.clientX, y: t.clientY};
+          render();
+        }
+      } else if (ids.length === 2) {
+        for (var i = 0; i < e.changedTouches.length; i++) {
+          var ct = e.changedTouches[i];
+          activeTouches[ct.identifier] = {x: ct.clientX, y: ct.clientY};
+        }
+        var pts = Object.values(activeTouches);
+        var dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        if (lastPinchDist > 0) {
+          var cx = (pts[0].x + pts[1].x) / 2, cy = (pts[0].y + pts[1].y) / 2;
+          var rect = canvas.getBoundingClientRect();
+          engine.zoomAt(cx - rect.left, cy - rect.top, dist / lastPinchDist);
+          updateZoom(); render();
+        }
+        lastPinchDist = dist;
+      }
+    }, {passive:false});
+    canvas.addEventListener("touchend", function(e) {
+      for (var i = 0; i < e.changedTouches.length; i++) delete activeTouches[e.changedTouches[i].identifier];
+      lastPinchDist = 0;
+      saveState();
     });
 
     /* ── Resize ─────────────────────────────────────────────── */
-    var rt;
-    window.addEventListener("resize", function() {
-      clearTimeout(rt); rt = setTimeout(function() { engine.resize(); render(); }, 80);
-    });
+    var resizeTimer;
+    function onResize() { clearTimeout(resizeTimer); resizeTimer = setTimeout(function() { engine.resize(); render(); }, 60); }
+    window.addEventListener("resize", onResize);
+    // Also observe the iframe container being resized by PowerPoint
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(onResize).observe(document.body);
+    }
 
     /* ── Render ─────────────────────────────────────────────── */
     var rafP = false;
@@ -430,8 +497,11 @@
 
     /* ── Init ───────────────────────────────────────────────── */
     engine.resize();
-    loadDemoData();
+    if (!loadState()) {
+      loadDemoData();
+    }
     updateZoom();
+    render();
   }
   </script>
 </body>
