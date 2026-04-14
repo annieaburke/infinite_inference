@@ -394,7 +394,7 @@ ScatterEngine.prototype._drawPoints = function () {
   ctx.restore();
 };
 
-/* ---------- labels with collision avoidance and zoom-based visibility ---------- */
+/* ---------- labels with multi-position placement and collision avoidance ---------- */
 ScatterEngine.prototype._drawLabels = function () {
   var ctx = this.ctx;
   ctx.save();
@@ -408,6 +408,10 @@ ScatterEngine.prototype._drawLabels = function () {
 
   var zoom = this.cam.zoom;
   this._labelRects = [];
+
+  // Collect labels to draw with placement info, then render in two passes
+  // (leader lines first, then pills+text on top)
+  var placed = [];
 
   // Sort points: always show hovered/selected/search-matched first
   var order = [];
@@ -423,13 +427,21 @@ ScatterEngine.prototype._drawLabels = function () {
     return pa - pb;   // lower priority value → drawn first
   });
 
+  // Plot boundaries for edge clamping
+  var plotL = this.margin.left;
+  var plotR = this.W - this.margin.right;
+  var plotT = this.margin.top;
+  var plotB = this.H - this.margin.bottom;
+  var lblH = 14;
+  var gap = 8;       // offset from point center
+  var diagGap = 6;   // offset for diagonal positions
+
   for (var k = 0; k < order.length; k++) {
     var idx = order[k];
     var p = this.points[idx];
     if (!p.label) continue;
 
     var priority = p.priority || 3;
-    // Skip labels that require more zoom than we currently have
     var threshold = this.labelZoomThresholds[Math.min(priority, this.labelZoomThresholds.length - 1)] || 0;
     var forceShow = (idx === this.hoveredIndex || idx === this.selectedIndex ||
                      (this.searchTerm && this.searchMatches.has(idx)));
@@ -437,30 +449,107 @@ ScatterEngine.prototype._drawLabels = function () {
 
     var sx = this.wx(p.x);
     var sy = this.wy(p.y);
-    if (sx < this.margin.left - 40 || sx > this.W - this.margin.right + 40) continue;
-    if (sy < this.margin.top - 20 || sy > this.H - this.margin.bottom + 20) continue;
+    if (sx < plotL - 40 || sx > plotR + 40) continue;
+    if (sy < plotT - 20 || sy > plotB + 20) continue;
 
     var textW = ctx.measureText(p.label).width;
-    var lx = sx + 8;
-    var ly = sy - 4;
-    var rect = { x: lx - 1, y: ly - 12, w: textW + 2, h: 14 };
 
-    // Collision check (skip for force-shown)
-    if (!forceShow && this._collides(rect)) continue;
+    // Try 8 candidate positions: right, left, above, below, and 4 diagonals.
+    // Each candidate: [label-x, label-y] where label-x/y is the text draw point
+    // (textAlign=left, textBaseline=bottom), so rect top-left = (lx-1, ly-12).
+    var candidates = [
+      [sx + gap,              sy - 4],                     // right
+      [sx - gap - textW,      sy - 4],                     // left
+      [sx - textW / 2,        sy - gap - 4],               // above
+      [sx - textW / 2,        sy + gap + lblH - 4],        // below
+      [sx + diagGap,          sy - diagGap - 4],           // upper-right
+      [sx - diagGap - textW,  sy - diagGap - 4],           // upper-left
+      [sx + diagGap,          sy + diagGap + lblH - 4],    // lower-right
+      [sx - diagGap - textW,  sy + diagGap + lblH - 4],   // lower-left
+    ];
 
-    this._labelRects.push(rect);
+    var bestRect = null;
+    var bestLx = 0, bestLy = 0;
+    var bestIdx = -1;
+
+    for (var ci = 0; ci < candidates.length; ci++) {
+      var lx = candidates[ci][0];
+      var ly = candidates[ci][1];
+      var rect = { x: lx - 1, y: ly - 12, w: textW + 2, h: lblH };
+
+      // Clamp to plot boundaries instead of rejecting
+      if (rect.x < plotL) { lx += (plotL - rect.x); rect.x = plotL; }
+      if (rect.x + rect.w > plotR) { lx -= (rect.x + rect.w - plotR); rect.x = plotR - rect.w; }
+      if (rect.y < plotT) { ly += (plotT - rect.y); rect.y = plotT; }
+      if (rect.y + rect.h > plotB) { ly -= (rect.y + rect.h - plotB); rect.y = plotB - rect.h; }
+
+      if (!this._collides(rect)) {
+        bestRect = rect;
+        bestLx = lx;
+        bestLy = ly;
+        bestIdx = ci;
+        break;
+      }
+    }
+
+    // Force-shown labels: if all positions collide, use the first (right) with clamping
+    if (!bestRect && forceShow) {
+      bestLx = candidates[0][0];
+      bestLy = candidates[0][1];
+      bestRect = { x: bestLx - 1, y: bestLy - 12, w: textW + 2, h: lblH };
+      if (bestRect.x < plotL) { bestLx += (plotL - bestRect.x); bestRect.x = plotL; }
+      if (bestRect.x + bestRect.w > plotR) { bestLx -= (bestRect.x + bestRect.w - plotR); bestRect.x = plotR - bestRect.w; }
+      if (bestRect.y < plotT) { bestLy += (plotT - bestRect.y); bestRect.y = plotT; }
+      if (bestRect.y + bestRect.h > plotB) { bestLy -= (bestRect.y + bestRect.h - plotB); bestRect.y = plotB - bestRect.h; }
+      bestIdx = 0;
+    }
+
+    // All positions failed — hide this label
+    if (!bestRect) continue;
+
+    this._labelRects.push(bestRect);
+
+    // Determine if we need a leader line (label not in default right position)
+    var displaced = bestIdx > 0 ||
+                    Math.abs(bestLx - (sx + gap)) > 2 ||
+                    Math.abs(bestLy - (sy - 4)) > 2;
+
+    placed.push({
+      idx: idx, lx: bestLx, ly: bestLy, rect: bestRect,
+      sx: sx, sy: sy, displaced: displaced
+    });
+  }
+
+  // Pass 1: draw leader lines for displaced labels
+  ctx.strokeStyle = "rgba(180,180,200,0.25)";
+  ctx.lineWidth = 1;
+  for (var j = 0; j < placed.length; j++) {
+    if (!placed[j].displaced) continue;
+    var info = placed[j];
+    // Line from point to nearest edge of the label rect
+    var rx = Math.max(info.rect.x, Math.min(info.rect.x + info.rect.w, info.sx));
+    var ry = Math.max(info.rect.y, Math.min(info.rect.y + info.rect.h, info.sy));
+    ctx.beginPath();
+    ctx.moveTo(info.sx, info.sy);
+    ctx.lineTo(rx, ry);
+    ctx.stroke();
+  }
+
+  // Pass 2: draw pills and text
+  for (var j2 = 0; j2 < placed.length; j2++) {
+    var pl = placed[j2];
 
     // Background pill
     ctx.fillStyle = "rgba(15,15,35,0.75)";
     ctx.beginPath();
-    this._roundRect(ctx, rect.x - 2, rect.y - 1, rect.w + 4, rect.h + 2, 3);
+    this._roundRect(ctx, pl.rect.x - 2, pl.rect.y - 1, pl.rect.w + 4, pl.rect.h + 2, 3);
     ctx.fill();
 
     // Text
-    ctx.fillStyle = (idx === this.hoveredIndex) ? "#5dade2" :
-                    (idx === this.selectedIndex) ? "#f1948a" :
-                    (this.searchTerm && this.searchMatches.has(idx)) ? "#f5b041" : "#d0d4de";
-    ctx.fillText(p.label, lx, ly);
+    ctx.fillStyle = (pl.idx === this.hoveredIndex) ? "#5dade2" :
+                    (pl.idx === this.selectedIndex) ? "#f1948a" :
+                    (this.searchTerm && this.searchMatches.has(pl.idx)) ? "#f5b041" : "#d0d4de";
+    ctx.fillText(this.points[pl.idx].label, pl.lx, pl.ly);
   }
   ctx.restore();
 };
