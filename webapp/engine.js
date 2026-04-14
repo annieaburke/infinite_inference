@@ -203,7 +203,7 @@ ScatterEngine.prototype.draw = function () {
 /* ---------- background ---------- */
 ScatterEngine.prototype._drawBackground = function () {
   var ctx = this.ctx;
-  ctx.fillStyle = "#f9fafb";
+  ctx.fillStyle = "#0f0f23";
   ctx.fillRect(this.margin.left, this.margin.top, this.plotW(), this.plotH());
 };
 
@@ -226,7 +226,7 @@ ScatterEngine.prototype._drawRegions = function () {
 
     // region label
     if (r.label) {
-      ctx.fillStyle = r.labelColor || "rgba(80,80,80,0.35)";
+      ctx.fillStyle = r.labelColor || "rgba(200,200,220,0.3)";
       var fontSize = Math.max(10, Math.min(18, 14 * this.cam.zoom));
       ctx.font = "600 " + fontSize + "px -apple-system, sans-serif";
       ctx.textAlign = "center";
@@ -245,7 +245,7 @@ ScatterEngine.prototype._drawGrid = function () {
   ctx.rect(this.margin.left, this.margin.top, this.plotW(), this.plotH());
   ctx.clip();
 
-  ctx.strokeStyle = "#e8eaed";
+  ctx.strokeStyle = "rgba(255,255,255,0.08)";
   ctx.lineWidth = 1;
 
   var ticks;
@@ -278,9 +278,9 @@ ScatterEngine.prototype._drawGrid = function () {
 /* ---------- axes and tick labels ---------- */
 ScatterEngine.prototype._drawAxes = function () {
   var ctx = this.ctx;
-  ctx.strokeStyle = "#999";
+  ctx.strokeStyle = "rgba(255,255,255,0.25)";
   ctx.lineWidth = 1;
-  ctx.fillStyle = "#666";
+  ctx.fillStyle = "#b0b8c8";
   ctx.font = "11px -apple-system, sans-serif";
 
   // X axis ticks
@@ -312,7 +312,7 @@ ScatterEngine.prototype._drawAxes = function () {
   }
 
   // Axis lines
-  ctx.strokeStyle = "#888";
+  ctx.strokeStyle = "rgba(255,255,255,0.3)";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(this.margin.left, this.margin.top);
@@ -324,7 +324,7 @@ ScatterEngine.prototype._drawAxes = function () {
 /* ---------- axis titles ---------- */
 ScatterEngine.prototype._drawAxisTitles = function () {
   var ctx = this.ctx;
-  ctx.fillStyle = "#444";
+  ctx.fillStyle = "#d8dce6";
   ctx.font = "bold 13px -apple-system, sans-serif";
 
   // X title
@@ -385,7 +385,7 @@ ScatterEngine.prototype._drawPoints = function () {
       ctx.lineWidth = 2;
     } else {
       ctx.fillStyle = p.color || "#5b8def";
-      ctx.strokeStyle = "rgba(255,255,255,0.8)";
+      ctx.strokeStyle = "rgba(0,0,0,0.4)";
       ctx.lineWidth = 1.5;
     }
     ctx.fill();
@@ -451,15 +451,15 @@ ScatterEngine.prototype._drawLabels = function () {
     this._labelRects.push(rect);
 
     // Background pill
-    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.fillStyle = "rgba(15,15,35,0.75)";
     ctx.beginPath();
     this._roundRect(ctx, rect.x - 2, rect.y - 1, rect.w + 4, rect.h + 2, 3);
     ctx.fill();
 
     // Text
-    ctx.fillStyle = (idx === this.hoveredIndex) ? "#2980b9" :
-                    (idx === this.selectedIndex) ? "#c0392b" :
-                    (this.searchTerm && this.searchMatches.has(idx)) ? "#d35400" : "#333";
+    ctx.fillStyle = (idx === this.hoveredIndex) ? "#5dade2" :
+                    (idx === this.selectedIndex) ? "#f1948a" :
+                    (this.searchTerm && this.searchMatches.has(idx)) ? "#f5b041" : "#d0d4de";
     ctx.fillText(p.label, lx, ly);
   }
   ctx.restore();

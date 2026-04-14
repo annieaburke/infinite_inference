@@ -21,10 +21,10 @@
   /* ── Demo data (used when no CSV is loaded) ─────────────────── */
   function loadDemoData() {
     var regions = [
-      { xMin:  0, xMax: 35, yMin: 60, yMax: 100, color: "rgba(46,204,113,0.08)",  label: "High Growth" },
-      { xMin: 35, xMax: 70, yMin: 30, yMax:  70, color: "rgba(52,152,219,0.08)",  label: "Stable" },
-      { xMin: 60, xMax:100, yMin:  0, yMax:  40, color: "rgba(231,76,60,0.07)",   label: "Declining" },
-      { xMin:  0, xMax: 30, yMin:  0, yMax:  30, color: "rgba(155,89,182,0.07)",  label: "Emerging" },
+      { xMin:  0, xMax: 35, yMin: 60, yMax: 100, color: "rgba(46,204,113,0.12)",  label: "High Growth" },
+      { xMin: 35, xMax: 70, yMin: 30, yMax:  70, color: "rgba(52,152,219,0.12)",  label: "Stable" },
+      { xMin: 60, xMax:100, yMin:  0, yMax:  40, color: "rgba(231,76,60,0.10)",   label: "Declining" },
+      { xMin:  0, xMax: 30, yMin:  0, yMax:  30, color: "rgba(155,89,182,0.10)",  label: "Emerging" },
     ];
     engine.setRegions(regions);
     engine.axisTitle.x = "Market Share (%)";
@@ -357,7 +357,7 @@
     var rect = canvas.getBoundingClientRect();
     var mx = e.clientX - rect.left;
     var my = e.clientY - rect.top;
-    var factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    var factor = e.deltaY < 0 ? 1.06 : 1 / 1.06;
     engine.zoomAt(mx, my, factor);
     updateZoomDisplay();
     render();
