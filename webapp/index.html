@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interactive Scatterplot Map</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Toolbar -->
+    <div id="toolbar">
+      <div class="toolbar-group">
+        <label for="search-input">Search:</label>
+        <input type="text" id="search-input" placeholder="Find a point..." autocomplete="off">
+        <button id="clear-search" title="Clear search">&times;</button>
+      </div>
+      <div class="toolbar-group">
+        <label for="region-filter">Region:</label>
+        <select id="region-filter">
+          <option value="__all__">All Regions</option>
+        </select>
+      </div>
+      <div class="toolbar-group">
+        <button id="btn-reset-view" title="Reset view">Reset View</button>
+        <button id="btn-zoom-in" title="Zoom in">+</button>
+        <button id="btn-zoom-out" title="Zoom out">&minus;</button>
+      </div>
+      <div class="toolbar-group">
+        <label for="csv-upload" class="file-label">Import CSV</label>
+        <input type="file" id="csv-upload" accept=".csv">
+      </div>
+      <div class="toolbar-group zoom-display">
+        Zoom: <span id="zoom-level">1.00</span>x
+      </div>
+    </div>
+
+    <!-- Canvas -->
+    <canvas id="scatter-canvas"></canvas>
+
+    <!-- Tooltip -->
+    <div id="tooltip" class="hidden"></div>
+
+    <!-- Detail Panel -->
+    <div id="detail-panel" class="hidden">
+      <button id="close-detail">&times;</button>
+      <h3 id="detail-title"></h3>
+      <div id="detail-body"></div>
+    </div>
+  </div>
+
+  <script src="engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
