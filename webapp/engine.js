@@ -1,9 +1,10 @@
 /**
- * ScatterEngine — canvas-based rendering engine for a large virtual coordinate plane.
+ * ScatterEngine — canvas-based rendering engine for a bounded analytical chart.
  *
- * The world is defined in data coordinates. A camera (offsetX, offsetY, zoom)
- * maps world coords to screen pixels. Pan/zoom only change the camera — the
- * underlying coordinate plane stays fixed.
+ * The world is defined in data coordinates with fixed chart domains.
+ * A camera (offsetX, offsetY, zoom) maps world coords to screen pixels.
+ * Pan/zoom only change the camera within clamped bounds — the user can
+ * inspect dense regions but cannot drift into empty space.
  */
 
 "use strict";
@@ -15,12 +16,21 @@ function ScatterEngine(canvas) {
   this.canvas = canvas;
   this.ctx = canvas.getContext("2d");
 
-  // Camera state (world units)
+  // Camera state (world-pixel units)
   this.cam = { x: 0, y: 0, zoom: 1 };
 
-  // Data bounds (computed from points)
-  this.worldMinX = 0;  this.worldMaxX = 100;
-  this.worldMinY = 0;  this.worldMaxY = 100;
+  // Fixed chart domain — the analytical space
+  this.domainX = [0, 10];
+  this.domainY = [0, 8];
+  this.domainPad = 0.3;   // small visual margin around the domain
+
+  // Effective world bounds (domain + padding) — set in _applyDomain()
+  this.worldMinX = 0;  this.worldMaxX = 10;
+  this.worldMinY = 0;  this.worldMaxY = 8;
+
+  // Zoom limits
+  this.minZoom = 1.0;
+  this.maxZoom = 3.0;
 
   // Margins in pixels for axis area
   this.margin = { top: 30, right: 30, bottom: 50, left: 60 };
@@ -43,6 +53,7 @@ function ScatterEngine(canvas) {
   // Caches
   this._labelRects = [];
 
+  this._applyDomain();
   this.resize();
 }
 
@@ -104,24 +115,16 @@ ScatterEngine.prototype.sy = function (screenY) {
    ================================================================ */
 ScatterEngine.prototype.setPoints = function (arr) {
   this.points = arr;
-  this._computeBounds();
+  this._applyDomain();
 };
 
-ScatterEngine.prototype._computeBounds = function () {
-  if (this.points.length === 0) return;
-  var xs = this.points.map(function (p) { return p.x; });
-  var ys = this.points.map(function (p) { return p.y; });
-  var minX = Math.min.apply(null, xs);
-  var maxX = Math.max.apply(null, xs);
-  var minY = Math.min.apply(null, ys);
-  var maxY = Math.max.apply(null, ys);
-  // add 5% padding
-  var padX = (maxX - minX) * 0.05 || 1;
-  var padY = (maxY - minY) * 0.05 || 1;
-  this.worldMinX = minX - padX;
-  this.worldMaxX = maxX + padX;
-  this.worldMinY = minY - padY;
-  this.worldMaxY = maxY + padY;
+/** Apply the fixed chart domain with padding to world bounds. */
+ScatterEngine.prototype._applyDomain = function () {
+  var pad = this.domainPad;
+  this.worldMinX = this.domainX[0] - pad;
+  this.worldMaxX = this.domainX[1] + pad;
+  this.worldMinY = this.domainY[0] - pad;
+  this.worldMaxY = this.domainY[1] + pad;
 };
 
 ScatterEngine.prototype.setRegions = function (arr) {
@@ -134,7 +137,7 @@ ScatterEngine.prototype.setRegions = function (arr) {
 ScatterEngine.prototype.resetCamera = function () {
   this.cam.x = 0;
   this.cam.y = 0;
-  this.cam.zoom = 1;
+  this.cam.zoom = this.minZoom;
 };
 
 ScatterEngine.prototype.zoomAt = function (screenX, screenY, factor) {
@@ -142,15 +145,37 @@ ScatterEngine.prototype.zoomAt = function (screenX, screenY, factor) {
   var wx = (screenX - this.margin.left) / this.cam.zoom + this.cam.x;
   var wy = (screenY - this.margin.top) / this.cam.zoom + this.cam.y;
 
-  var newZoom = Math.max(0.1, Math.min(50, this.cam.zoom * factor));
+  var newZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.cam.zoom * factor));
   this.cam.x = wx - (screenX - this.margin.left) / newZoom;
   this.cam.y = wy - (screenY - this.margin.top) / newZoom;
   this.cam.zoom = newZoom;
+  this._clampPan();
 };
 
 ScatterEngine.prototype.pan = function (dx, dy) {
   this.cam.x -= dx / this.cam.zoom;
   this.cam.y -= dy / this.cam.zoom;
+  this._clampPan();
+};
+
+/**
+ * Clamp the camera offset so the visible viewport never leaves the chart area.
+ *
+ * At zoom 1 the entire chart fits the plot area, so cam offsets stay at 0.
+ * At higher zoom, the viewport is smaller than the full chart — the camera
+ * can move within the chart but cannot show empty space beyond the edges.
+ */
+ScatterEngine.prototype._clampPan = function () {
+  var pw = this.plotW();
+  var ph = this.plotH();
+  // visibleWorldPx = plotPixels / zoom  (how much of the world-pixel space is visible)
+  var visW = pw / this.cam.zoom;
+  var visH = ph / this.cam.zoom;
+  // cam.x/y is the top-left corner in world-pixel space.
+  // World-pixel space runs from 0 to plotW/plotH at zoom 1.
+  // Clamp so the viewport window [cam.x .. cam.x+visW] stays inside [0 .. pw].
+  this.cam.x = Math.max(0, Math.min(pw - visW, this.cam.x));
+  this.cam.y = Math.max(0, Math.min(ph - visH, this.cam.y));
 };
 
 ScatterEngine.prototype.fitAll = function () {

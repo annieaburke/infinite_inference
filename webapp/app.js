@@ -20,15 +20,16 @@
 
   /* ── Demo data (used when no CSV is loaded) ─────────────────── */
   function loadDemoData() {
+    // Regions scaled to 0-10 x, 0-8 y domain
     var regions = [
-      { xMin:  0, xMax: 35, yMin: 60, yMax: 100, color: "rgba(46,204,113,0.12)",  label: "High Growth" },
-      { xMin: 35, xMax: 70, yMin: 30, yMax:  70, color: "rgba(52,152,219,0.12)",  label: "Stable" },
-      { xMin: 60, xMax:100, yMin:  0, yMax:  40, color: "rgba(231,76,60,0.10)",   label: "Declining" },
-      { xMin:  0, xMax: 30, yMin:  0, yMax:  30, color: "rgba(155,89,182,0.10)",  label: "Emerging" },
+      { xMin: 0, xMax: 3.5, yMin: 4.8, yMax: 8, color: "rgba(46,204,113,0.12)",  label: "High Growth" },
+      { xMin: 3.5, xMax: 7,  yMin: 2.4, yMax: 5.6, color: "rgba(52,152,219,0.12)",  label: "Stable" },
+      { xMin: 6, xMax: 10,  yMin: 0,   yMax: 3.2, color: "rgba(231,76,60,0.10)",   label: "Declining" },
+      { xMin: 0, xMax: 3,   yMin: 0,   yMax: 2.4, color: "rgba(155,89,182,0.10)",  label: "Emerging" },
     ];
     engine.setRegions(regions);
-    engine.axisTitle.x = "Market Share (%)";
-    engine.axisTitle.y = "Growth Rate (%)";
+    engine.axisTitle.x = "Market Share";
+    engine.axisTitle.y = "Growth Rate";
 
     var names = [
       "Alpha Corp","Beta Inc","Gamma LLC","Delta Co","Epsilon Ltd",
@@ -49,8 +50,8 @@
     function rand() { seed = (seed * 16807 + 0) % 2147483647; return seed / 2147483647; }
     for (var i = 0; i < names.length; i++) {
       points.push({
-        x: rand() * 95 + 2,
-        y: rand() * 95 + 2,
+        x: rand() * 9.5 + 0.2,    // 0.2 – 9.7  (within 0-10 domain)
+        y: rand() * 7.5 + 0.2,    // 0.2 – 7.7  (within 0-8 domain)
         label: names[i],
         region: regionNames[i % regionNames.length],
         color: ["#5b8def","#2ecc71","#e67e22","#9b59b6","#e74c3c"][i % 5],
@@ -169,6 +170,19 @@
         }
       }
       points.push(pt);
+    }
+
+    // Derive domain from imported data so chart bounds fit the CSV
+    if (points.length > 0) {
+      var xs = points.map(function (p) { return p.x; });
+      var ys = points.map(function (p) { return p.y; });
+      var xLo = Math.min.apply(null, xs);
+      var xHi = Math.max.apply(null, xs);
+      var yLo = Math.min.apply(null, ys);
+      var yHi = Math.max.apply(null, ys);
+      // Round outward to tidy numbers
+      engine.domainX = [Math.floor(xLo), Math.ceil(xHi)];
+      engine.domainY = [Math.floor(yLo), Math.ceil(yHi)];
     }
 
     engine.setPoints(points);
