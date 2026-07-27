@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Input, Inference, Continuation — editable</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:#f4f4f2;color:#111;font-family:"IBM Plex Sans",system-ui,sans-serif;overflow:hidden}
+
+  /* ── canvas / camera ─────────────────────────────────────────── */
+  #viewport{
+    position:fixed;inset:0;overflow:hidden;
+    background-color:#f4f4f2;
+    background-image:radial-gradient(circle, #d3d3ce 1px, transparent 1px);
+    background-size:24px 24px;
+    cursor:default;
+    touch-action:none;
+  }
+  #viewport.panning{cursor:grabbing}
+  #world{transform-origin:0 0;position:absolute;left:0;top:0;will-change:transform}
+  #stage{position:relative;width:1560px;height:1372px;background:#fff;box-shadow:0 1px 0 rgba(0,0,0,.04),0 24px 60px rgba(0,0,0,.10)}
+  #wires{position:absolute;inset:0;width:1560px;height:1372px;pointer-events:none;overflow:visible}
+  #wires line,#wires path{stroke:#111;stroke-width:1;fill:none}
+
+  .abs{position:absolute}
+  .box{border:1px solid #111;background:#fff;padding:9px 10px}
+  .box h3{font-family:"Barlow Condensed",sans-serif;font-weight:700;text-transform:uppercase;font-size:13.5px;letter-spacing:.05em;line-height:1.1}
+  .box h4{font-family:"IBM Plex Mono",monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:#999;margin-bottom:3px}
+  .box p{font-size:10.5px;line-height:1.4;margin-top:5px}
+  .box p.sub{color:#666}
+  .box .produces{font-family:"IBM Plex Mono",monospace;font-size:9px;margin-top:8px;padding-top:6px;border-top:1px solid #ccc}
+
+  h1{font-family:"Barlow Condensed",sans-serif;font-weight:700;text-transform:uppercase;font-size:32px;letter-spacing:.06em;line-height:1}
+  .subtitle{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.07em;text-transform:uppercase;margin-top:7px}
+  .epigraph{font-size:12px;color:#666;font-style:italic;margin-top:8px;white-space:nowrap}
+
+  .legend{display:flex;flex-direction:column;gap:4px;align-items:flex-end;font-family:"IBM Plex Mono",monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#666}
+  .legend .proposed,.legend .open,.legend .collision{color:#111}
+
+  .proposed{border-bottom:1px dotted #111}
+  .open{border-bottom:1px dashed #111}
+  .collision{border-bottom:2px solid #111}
+
+  .territory{font-family:"Barlow Condensed",sans-serif;font-weight:600;text-transform:uppercase;font-size:14px;letter-spacing:.34em;color:#111;text-align:center}
+
+  .verb{border:1px solid #111;background:#fff;font-family:"IBM Plex Mono",monospace;font-size:10.5px;padding:3px 9px}
+  .rider{font-size:10.5px;color:#666;text-align:center}
+  .wire-label{font-family:"IBM Plex Mono",monospace;font-size:9px;letter-spacing:.03em;background:#fff;padding:0 4px;white-space:nowrap}
+
+  .banner{border-top:1px solid #111;border-bottom:1px solid #111;text-align:center;font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.05em;padding:7px 12px;background:#fff}
+  .banner.frame{font-family:"IBM Plex Sans",sans-serif;font-size:12px;letter-spacing:0}
+  .banner.frame .fixed{font-style:italic}
+
+  .panel{background:#fff;padding:11px 13px}
+  .panel.p-open{border:1px dashed #111}
+  .panel.p-collision{border:2px solid #111}
+  .panel h3{font-family:"Barlow Condensed",sans-serif;font-weight:700;text-transform:uppercase;font-size:13.5px;letter-spacing:.05em;margin-bottom:6px}
+  .panel ul{list-style:none}
+  .panel li{font-size:9.5px;padding:4px 0;border-bottom:1px solid #ddd;line-height:1.45}
+  .panel li:last-child{border-bottom:none}
+  .panel .test{font-style:italic;color:#666;margin-top:6px;font-size:9.5px}
+
+  .spine-label{font-family:"Barlow Condensed",sans-serif;font-weight:600;text-transform:uppercase;font-size:14px;letter-spacing:.34em}
+  .spine-box p{font-size:9.5px}
+  .spine-box .sub{font-size:9px}
+
+  footer.abs p{font-size:10.5px;color:#666}
+  .version{font-family:"IBM Plex Mono",monospace;font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;color:#999;margin-top:8px}
+
+  /* ── interaction affordances ─────────────────────────────────── */
+  body.mode-arrange .draggable{cursor:grab}
+  body.mode-arrange .draggable:hover{outline:1px solid #9db;outline-offset:2px}
+  .draggable.dragging{cursor:grabbing;outline:1px solid #4a8!important;outline-offset:2px}
+  .draggable.editing{cursor:text;outline:1px dashed #4a8!important;outline-offset:2px;background:#fff}
+  .draggable.editing *{cursor:text}
+
+  /* ── floating toolbar (fixed to viewport, never pans) ─────────── */
+  #bar{
+    position:fixed;top:14px;right:14px;z-index:50;
+    display:flex;gap:6px;align-items:center;
+    background:#fff;border:1px solid #111;padding:6px 8px;
+    box-shadow:0 6px 22px rgba(0,0,0,.14);
+    font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+  }
+  #bar button{
+    font:inherit;letter-spacing:inherit;text-transform:inherit;
+    background:none;border:1px solid transparent;color:#111;cursor:pointer;
+    padding:4px 7px;border-radius:2px;white-space:nowrap;
+  }
+  #bar button:hover{border-color:#111}
+  #bar button.on{background:#111;color:#fff}
+  #bar .sep{width:1px;align-self:stretch;background:#ddd;margin:0 2px}
+  #bar .zoomlbl{min-width:40px;text-align:center;color:#666}
+
+  #hint{
+    position:fixed;left:14px;bottom:14px;z-index:50;max-width:340px;
+    background:#fff;border:1px solid #111;padding:9px 11px;
+    font-family:"IBM Plex Mono",monospace;font-size:9.5px;line-height:1.6;letter-spacing:.03em;color:#333;
+    box-shadow:0 6px 22px rgba(0,0,0,.14);
+  }
+  #hint b{color:#111}
+  #hint .close{position:absolute;top:5px;right:8px;cursor:pointer;color:#999;border:none;background:none;font:inherit}
+  #hint.hidden{display:none}
+
+  #toast{
+    position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;
+    background:#111;color:#fff;padding:7px 14px;font-family:"IBM Plex Mono",monospace;
+    font-size:10px;letter-spacing:.06em;text-transform:uppercase;opacity:0;transition:opacity .18s;pointer-events:none;
+  }
+  #toast.show{opacity:1}
+
+  body.mode-view #bar .arrange-only{display:none}
+
+  @media print{#bar,#hint,#toast{display:none}#viewport{position:static;overflow:visible;background:#fff}#world{transform:none!important}#stage{box-shadow:none}}
+</style>
+</head>
+<body class="mode-arrange">
+
+<!-- ── floating toolbar ─────────────────────────────────────────── -->
+<div id="bar">
+  <button id="modeBtn" title="Toggle arrange / view (lock) mode">arrange</button>
+  <span class="sep"></span>
+  <button id="zoomOut" title="Zoom out">−</button>
+  <span class="zoomlbl" id="zoomLbl">100%</span>
+  <button id="zoomIn" title="Zoom in">+</button>
+  <button id="fitBtn" title="Fit map to screen">fit</button>
+  <span class="sep"></span>
+  <button id="resetBtn" class="arrange-only" title="Reset all boxes to their saved layout">reset layout</button>
+  <button id="downloadBtn" title="Download a standalone copy with the current layout">download</button>
+</div>
+
+<!-- ── help card ────────────────────────────────────────────────── -->
+<div id="hint">
+  <button class="close" onclick="document.getElementById('hint').classList.add('hidden')">×</button>
+  <b>Drag empty space</b> to pan · <b>scroll / pinch</b> to zoom<br>
+  <b>Drag a box</b> to move it — lines follow<br>
+  <b>Double-click</b> a box to edit its text · <b>Esc</b> to finish<br>
+  Edits auto-save in this browser · <b>Download</b> for a standalone copy
+</div>
+
+<div id="toast"></div>
+
+<!-- ── canvas ───────────────────────────────────────────────────── -->
+<div id="viewport">
+<div id="world">
+<div id="stage">
+
+<!-- WIRES: brackets + connectors are regenerated from live box positions -->
+<svg id="wires" viewBox="0 0 1560 1372" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#111"/>
+    </marker>
+  </defs>
+  <g id="conns"></g>
+</svg>
+
+<!-- ═══ HEADER ═══ -->
+<div id="h-title" class="abs draggable" style="left:24px;top:18px;width:900px">
+  <h1>Input, Inference, Continuation</h1>
+  <div class="subtitle"><span class="proposed">Inferential Discovery and Design Adaptation in Generative Workflows</span></div>
+</div>
+<div id="legend" class="abs draggable" style="left:1312px;top:20px;width:224px">
+  <div class="legend">
+    <span>working record</span>
+    <span class="proposed">proposed, unratified</span>
+    <span class="open">open by design</span>
+    <span class="collision">collision</span>
+  </div>
+</div>
+
+<!-- ═══ TERRITORY RAIL ═══ -->
+<div id="terr-input" class="abs territory draggable" style="left:24px;top:118px;width:226px">Input</div>
+<div id="terr-inference" class="abs territory draggable" style="left:282px;top:118px;width:480px">Inference</div>
+<div id="terr-continuation" class="abs territory draggable" style="left:794px;top:118px;width:742px">Continuation / Determination</div>
+
+<!-- ═══ ANATOMY ROW ═══ -->
+<div id="op" class="abs box draggable" style="left:24px;top:150px;width:226px;height:185px">
+  <h3>Operation</h3>
+  <p>the designer&rsquo;s edit, set in motion</p>
+  <p class="sub">modality: the sensory variations of input</p>
+</div>
+<div id="res" class="abs box draggable" style="left:280px;top:150px;width:226px;height:185px">
+  <h3>Resolution</h3>
+  <p>model-mediated resolution, invoked at any edit; a spectrum of conditioned resolution — occurs whether or not it is read</p>
+</div>
+<div id="arr" class="abs box draggable" style="left:536px;top:150px;width:226px;height:185px">
+  <h3>Arrival</h3>
+  <p>what comes back, at the interval — carries more than was asked</p>
+</div>
+<div id="find" class="abs box draggable" style="left:792px;top:150px;width:226px;height:185px">
+  <h3>Finding</h3>
+  <p>the designer finds a resolved relation in the work — an event separate from resolution (Ivory)</p>
+</div>
+<div id="dec" class="abs box draggable" style="left:1048px;top:150px;width:226px;height:185px">
+  <h3>Point of Decision</h3>
+  <p>taking up — in any number of ways — or setting aside</p>
+  <p class="sub">deciding under abundance</p>
+  <p class="sub">fixation can set in here</p>
+</div>
+<div id="cont" class="abs box draggable" style="left:1304px;top:150px;width:226px;height:185px">
+  <h3>Continuation</h3>
+  <p>the taken-up relation shapes the next operation; context for assessing later arrivals</p>
+  <p class="sub">the decision process (Object)</p>
+</div>
+
+<!-- ═══ THE DECISION PROCESS ═══ -->
+<div id="verbs" class="abs draggable" style="left:800px;top:364px;width:736px;display:flex;gap:8px;justify-content:center;flex-wrap:nowrap">
+  <span class="verb">accept</span><span class="verb">discard</span><span class="verb">regenerate</span><span class="verb">pivot</span><span class="verb">change parameters</span><span class="verb">keep going</span><span class="verb">stop</span>
+</div>
+<div id="rider-ending" class="abs rider draggable" style="left:800px;top:402px;width:736px">ending is a choice — only the designer decides when the work is complete</div>
+<div id="wl-recur" class="abs wire-label draggable" style="left:420px;top:421px">each determination shapes the context from which the next is made</div>
+
+<!-- ═══ BANNERS ═══ -->
+<div id="banner-juncture" class="abs banner draggable" style="left:24px;top:452px;width:1512px">THE JUNCTURE RECURS AT EVERY EDIT — episodic → constant — the point of decision is near-continuous</div>
+<div id="banner-frame" class="abs banner frame draggable" style="left:24px;top:496px;width:1512px"><b>INFERENTIAL DISCOVERY — the frame:</b> <span class="fixed">&ldquo;A result of conditioned generative resolution becomes an inferential discovery as the designer takes it up — in any number of ways, or sets it aside.&rdquo;</span></div>
+
+<!-- ═══ PAPERS ROW ═══ -->
+<div id="pap-mod" class="abs box draggable" style="left:24px;top:548px;width:480px;height:170px">
+  <h4>Paper — Modality</h4>
+  <h3>Multimodal Spatial Intelligence</h3>
+  <p>supplies the range — derives the combinatorial choice space: without it, asserted; with it, derived</p>
+</div>
+<div id="pap-spatial" class="abs box draggable" style="left:540px;top:548px;width:480px;height:170px">
+  <h4>Paper — Spatial Structure</h4>
+  <h3>Hybrid Continuity: Spatial Structure</h3>
+  <p>supplies the evidentiary logic — the arrival is structure whose status isn&rsquo;t settled by its appearance</p>
+  <p class="sub">standing condition: organizes how we design and think — the ground the work matters on</p>
+</div>
+<div id="pap-frame" class="abs box draggable" style="left:1056px;top:548px;width:480px;height:170px">
+  <h4>Paper — The Frame</h4>
+  <h3>Inferential Discovery &amp; Design Adaptation</h3>
+  <p>supplies the human consequence — why it matters beyond benchmarks; the frame the whole runs through</p>
+</div>
+
+<!-- edge labels: papers → sections -->
+<div id="wl-s1" class="abs wire-label draggable" style="left:288px;top:750px">derives the range (S1)</div>
+<div id="wl-cases" class="abs wire-label draggable" style="left:850px;top:736px">case material — Sections 3–4</div>
+<div id="wl-frame" class="abs wire-label draggable" style="left:600px;top:752px">the frame</div>
+<div id="wl-vocab" class="abs wire-label draggable" style="left:930px;top:748px">the vocabulary (S2)</div>
+<div id="wl-human" class="abs wire-label draggable" style="left:1330px;top:744px">the human consequence (S5)</div>
+<div id="wl-consume" class="abs wire-label draggable" style="left:1300px;top:768px">each section produces exactly what the next consumes →</div>
+
+<!-- ═══ SECTIONS ROW ═══ -->
+<div id="intro" class="abs box draggable" style="left:24px;top:790px;width:226px;height:250px">
+  <h4>Introduction</h4>
+  <h3>Working with Inferential Discoveries</h3>
+  <p class="sub">treats: the whole juncture</p>
+  <p>names the gap; positions the work in design judgment</p>
+  <p>the frame: discovery constituted in the taking-up</p>
+  <p>ground: no specification record persists — production cannot be reconstructed</p>
+  <p>stakes: taken-up relations propagate and compound</p>
+  <div class="produces">produces: the frame</div>
+</div>
+<div id="s1" class="abs box draggable" style="left:280px;top:790px;width:226px;height:250px">
+  <h4>Section 1</h4>
+  <h3>Production Conditions</h3>
+  <p class="sub">treats: operation → arrival</p>
+  <p>why inference is fertile</p>
+  <p>modality sizes the field of the findable — combinatorial magnitude only</p>
+  <p>a magnitude claim about the field — forensics on no particular result</p>
+  <div class="produces">produces: the derived range</div>
+</div>
+<div id="s2" class="abs box draggable" style="left:536px;top:790px;width:226px;height:250px">
+  <h4>Section 2</h4>
+  <h3>Reading Discoveries at the Point of Decision</h3>
+  <p class="sub">treats: finding → decision</p>
+  <p>vocabulary of the taking-up: integrate · redirect · absorb</p>
+  <p>binding · fixation sequence · coherent-enough</p>
+  <div class="produces">produces: the terms observation uses</div>
+</div>
+<div id="s3" class="abs box draggable" style="left:792px;top:790px;width:226px;height:250px">
+  <h4>Section 3</h4>
+  <h3>Comparative Observation as Method</h3>
+  <p class="sub">treats: the juncture, observed</p>
+  <p>matched tasks</p>
+  <p>four observational fields</p>
+  <div class="produces">produces: the protocol the instruments record</div>
+</div>
+<div id="s4" class="abs box draggable" style="left:1048px;top:790px;width:226px;height:250px">
+  <h4>Section 4</h4>
+  <h3>Current Observation &amp; Instrument Development</h3>
+  <p class="sub">treats: the juncture, recorded</p>
+  <p>two records per juncture — IRM: what arrived (frequency, spectrum) — 4.2, active</p>
+  <p>decision trace: what the designer did; where fixation set in — 4.3</p>
+  <p>across the workflow: how deciding changes as resolutions accumulate</p>
+  <p>4.4 case set · 4.5 Discovery Trace · 4.6 Diagnostic Matrix</p>
+  <div class="produces">produces: the record S5 reads</div>
+</div>
+<div id="s5" class="abs box draggable" style="left:1304px;top:790px;width:226px;height:250px">
+  <h4>Section 5</h4>
+  <h3>Current Contribution and Next Phase</h3>
+  <p class="sub">treats: continuation &amp; beyond</p>
+  <p>states what the framework and method open</p>
+  <p>5.4 what has not yet been claimed</p>
+  <p>coherent-enough presupposes a task-relative criterion the designer holds — judgment is where the work lives</p>
+  <div class="produces">produces: a disciplined account of design adaptation</div>
+</div>
+
+<!-- ═══ STATUS PANELS ═══ -->
+<div id="panel-open" class="abs panel p-open draggable" style="left:24px;top:1075px;width:350px;height:238px">
+  <h3>Open by Design</h3>
+  <ul>
+    <li>Terms beyond coherent-enough — TBD</li>
+    <li>Subtitle — five candidates on the drawing table; incumbent: the former working title</li>
+    <li>Discovery Trace · Diagnostic Matrix — summer protocol retired; Matrix on trial; staging TBD</li>
+    <li>Original visual studies, mapped before the research finalized: 1 of 3 complete. The remaining two hold no reserved place on this spine — surviving material lands, if at all, in the 4.4 case set.</li>
+  </ul>
+  <p class="test">A study earns its place when a section consumes what it produces.</p>
+</div>
+<div id="panel-collision" class="abs panel p-collision draggable" style="left:390px;top:1075px;width:396px;height:238px">
+  <h3>Collision — Pending Scrub</h3>
+  <ul>
+    <li>entry point — S1 title · Statement, both introduction openings: &ldquo;the point of entry and decision&rdquo; · S1 body: &ldquo;configurations of the entry point&rdquo;</li>
+    <li>260707 stratum below the S1 seam — S1 second pass · S2 body: returns register; constraint-executed / prior-filled / arbitrated · S3 third field · &ldquo;Propagation Timeline&rdquo; · front matter: &ldquo;what entered&rdquo; · 4.4 &ldquo;Summer Testing&rdquo; · S5 scaffold · feedback block at the file tail</li>
+  </ul>
+</div>
+
+<!-- ═══ RESEARCH SPINE ═══ -->
+<div id="spine-label" class="abs spine-label draggable" style="left:810px;top:1038px;width:726px;text-align:center">Research Spine</div>
+<div id="object" class="abs box spine-box draggable" style="left:810px;top:1075px;width:136px;height:238px">
+  <h3>Object</h3>
+  <p>the designer&rsquo;s decision process</p>
+</div>
+<div id="question" class="abs box spine-box draggable" style="left:956px;top:1075px;width:136px;height:238px">
+  <h3>Question</h3>
+  <p>how does the designer&rsquo;s relationship to a work in progress shift when model-mediated resolution can be invoked at any iterative edit?</p>
+  <p class="sub">Ivory soap: episodic → constant</p>
+  <p class="sub">dating apps: how constant restructures process</p>
+</div>
+<div id="method" class="abs box spine-box draggable" style="left:1102px;top:1075px;width:136px;height:238px">
+  <h3>Method</h3>
+  <p>observation at the juncture: each edit where model-mediated resolution is invoked</p>
+</div>
+<div id="terms" class="abs box spine-box draggable" style="left:1248px;top:1075px;width:136px;height:238px">
+  <h3>Terms</h3>
+  <p>coherent-enough</p>
+  <p class="sub"><span class="open">further terms TBD — open</span></p>
+</div>
+<div id="statement" class="abs box spine-box draggable" style="left:1394px;top:1075px;width:142px;height:238px">
+  <h3>Statement</h3>
+  <p>this dissertation studies inferential discovery in generative workflows at the point of decision, where recurring resolution changes the designer&rsquo;s relationship to the work in progress</p>
+</div>
+
+<!-- ═══ FOOTER ═══ -->
+<footer id="footer" class="abs draggable" style="left:24px;top:1332px;width:1512px">
+  <p class="version">dissertation_map_v10 · 260727 · sources: dissertation_map_v6 · 260725_PAPER_FINAL · 260727 session — abstract rewrite ratified · entry-point ruling</p>
+</footer>
+
+</div><!-- /stage -->
+</div><!-- /world -->
+</div><!-- /viewport -->
+
+<script>
+(function(){
+  "use strict";
+
+  const STORE_KEY = 'dissertation_map_edits_v1';
+  const stage    = document.getElementById('stage');
+  const world    = document.getElementById('world');
+  const viewport = document.getElementById('viewport');
+  const conns    = document.getElementById('conns');
+  const els       = Array.from(stage.querySelectorAll('.draggable'));
+  const byId      = Object.fromEntries(els.map(e => [e.id, e]));
+
+  /* ── connector definitions (reference box ids) ──────────────────── */
+  // brackets that span a group of boxes, sitting just above them
+  const BRACKETS = [
+    {ids:['op']},
+    {ids:['res','arr']},
+    {ids:['find','dec','cont']},
+    {ids:['object','question','method','terms','statement'], gap:12},
+  ];
+  // straight arrows: from one box side to another box side
+  const A = (from,fs,to,ts)=>({from,fs,to,ts,type:'straight'});
+  const CONNECTORS = [
+    // anatomy chain
+    A('op','right','res','left'), A('res','right','arr','left'),
+    A('arr','right','find','left'), A('find','right','dec','left'),
+    A('dec','right','cont','left'),
+    // decision → the verbs
+    A('dec','bottom','verbs','top'),
+    // continuation loops back to operation
+    {from:'cont',fs:'bottom',to:'op',ts:'bottom',type:'loop'},
+    // papers → sections
+    A('pap-mod','bottom','s1','top'),
+    A('pap-spatial','bottom','s3','top'),
+    A('pap-spatial','bottom','s4','top'),
+    A('pap-frame','bottom','intro','top'),
+    A('pap-frame','bottom','s2','top'),
+    A('pap-frame','bottom','s5','top'),
+    // section chain
+    A('intro','right','s1','left'), A('s1','right','s2','left'),
+    A('s2','right','s3','left'), A('s3','right','s4','left'),
+    A('s4','right','s5','left'),
+  ];
+
+  /* ── geometry helpers ───────────────────────────────────────────── */
+  function geo(el){
+    return {x:el.offsetLeft, y:el.offsetTop, w:el.offsetWidth, h:el.offsetHeight};
+  }
+  function anchor(el, side){
+    const g = geo(el);
+    switch(side){
+      case 'left':   return [g.x,        g.y + g.h/2];
+      case 'right':  return [g.x + g.w,  g.y + g.h/2];
+      case 'top':    return [g.x + g.w/2,g.y];
+      case 'bottom': return [g.x + g.w/2,g.y + g.h];
+      default:       return [g.x + g.w/2,g.y + g.h/2];
+    }
+  }
+  // pull a point a few px toward/away from a box edge along axis
+  function inset(p, side, d){
+    if(side==='left')   return [p[0]+d, p[1]];
+    if(side==='right')  return [p[0]-d, p[1]];
+    if(side==='top')    return [p[0], p[1]+d];
+    if(side==='bottom') return [p[0], p[1]-d];
+    return p;
+  }
+
+  function redraw(){
+    const parts = [];
+    // brackets
+    for(const b of BRACKETS){
+      const gs = b.ids.map(id=>geo(byId[id]));
+      const x1 = Math.min(...gs.map(g=>g.x));
+      const x2 = Math.max(...gs.map(g=>g.x+g.w));
+      const y  = Math.min(...gs.map(g=>g.y)) - (b.gap||10);
+      const t  = 6;
+      parts.push(`<path d="M${x1} ${y} v${t} M${x1} ${y} H${x2} M${x2} ${y} v${t}"/>`);
+    }
+    // connectors
+    for(const c of CONNECTORS){
+      const a = byId[c.from], z = byId[c.to];
+      if(!a || !z) continue;
+      let p1 = inset(anchor(a, c.fs), c.fs, 2);
+      let p2 = inset(anchor(z, c.ts), c.ts, 2);
+      if(c.type==='loop'){
+        const lane = Math.max(p1[1], p2[1]) + 46;
+        parts.push(`<path d="M${p1[0]} ${p1[1]} V${lane} H${p2[0]} V${p2[1]}" marker-end="url(#arr)"/>`);
+      } else {
+        parts.push(`<path d="M${p1[0]} ${p1[1]} L${p2[0]} ${p2[1]}" marker-end="url(#arr)"/>`);
+      }
+    }
+    conns.innerHTML = parts.join('');
+  }
+
+  /* ── camera (pan + zoom) ────────────────────────────────────────── */
+  const cam = {x:0, y:0, s:1};
+  const MIN_S = 0.2, MAX_S = 3;
+  function applyCam(){
+    world.style.transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.s})`;
+    viewport.style.backgroundPosition = `${cam.x}px ${cam.y}px`;
+    viewport.style.backgroundSize = `${24*cam.s}px ${24*cam.s}px`;
+    document.getElementById('zoomLbl').textContent = Math.round(cam.s*100) + '%';
+  }
+  function zoomAt(sx, sy, factor){
+    const ns = Math.max(MIN_S, Math.min(MAX_S, cam.s*factor));
+    const k = ns/cam.s;
+    cam.x = sx - (sx - cam.x)*k;
+    cam.y = sy - (sy - cam.y)*k;
+    cam.s = ns;
+    applyCam();
+  }
+  function fit(){
+    const pad = 60;
+    const vw = viewport.clientWidth - pad*2;
+    const vh = viewport.clientHeight - pad*2;
+    const s = Math.max(MIN_S, Math.min(MAX_S, Math.min(vw/1560, vh/1372)));
+    cam.s = s;
+    cam.x = (viewport.clientWidth  - 1560*s)/2;
+    cam.y = (viewport.clientHeight - 1372*s)/2;
+    applyCam();
+  }
+
+  viewport.addEventListener('wheel', (e)=>{
+    e.preventDefault();
+    const r = viewport.getBoundingClientRect();
+    const factor = e.deltaY < 0 ? 1.1 : 1/1.1;
+    zoomAt(e.clientX - r.left, e.clientY - r.top, factor);
+  }, {passive:false});
+
+  /* ── unified pointer handling: pan / drag / edit ────────────────── */
+  let drag = null;          // active box drag
+  let pan  = null;          // active canvas pan
+  const pointers = new Map();// for pinch
+  let pinch = null;
+  let rafPending = false;
+  function scheduleRedraw(){
+    if(rafPending) return; rafPending = true;
+    requestAnimationFrame(()=>{ rafPending = false; redraw(); });
+  }
+
+  function editingEl(){ return document.querySelector('.draggable.editing'); }
+
+  viewport.addEventListener('pointerdown', (e)=>{
+    pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    if(pointers.size === 2){ startPinch(); pan = null; drag = null; return; }
+
+    const ed = editingEl();
+    const target = e.target.closest('.draggable');
+
+    // clicking inside the element currently being edited → let text selection work
+    if(ed && target === ed) return;
+    // clicking anywhere else finishes an in-progress edit
+    if(ed && target !== ed) endEdit(ed);
+
+    const arrange = document.body.classList.contains('mode-arrange');
+    if(arrange && target){
+      // begin dragging a box
+      drag = {
+        el: target,
+        startX: e.clientX, startY: e.clientY,
+        origLeft: parseFloat(target.style.left) || target.offsetLeft,
+        origTop:  parseFloat(target.style.top)  || target.offsetTop,
+        moved: false,
+      };
+      target.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    } else {
+      // begin panning the canvas
+      pan = {startX:e.clientX, startY:e.clientY, camX:cam.x, camY:cam.y};
+      viewport.classList.add('panning');
+    }
+  });
+
+  viewport.addEventListener('pointermove', (e)=>{
+    if(pointers.has(e.pointerId)) pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+
+    if(pinch){ updatePinch(); return; }
+
+    if(drag){
+      const dx = (e.clientX - drag.startX)/cam.s;
+      const dy = (e.clientY - drag.startY)/cam.s;
+      if(!drag.moved && Math.hypot(e.clientX-drag.startX, e.clientY-drag.startY) > 3){
+        drag.moved = true;
+        drag.el.classList.add('dragging');
+      }
+      if(drag.moved){
+        drag.el.style.left = Math.round(drag.origLeft + dx) + 'px';
+        drag.el.style.top  = Math.round(drag.origTop  + dy) + 'px';
+        scheduleRedraw();
+      }
+      return;
+    }
+    if(pan){
+      cam.x = pan.camX + (e.clientX - pan.startX);
+      cam.y = pan.camY + (e.clientY - pan.startY);
+      applyCam();
+    }
+  });
+
+  function endPointer(e){
+    pointers.delete(e.pointerId);
+    if(pointers.size < 2 && pinch) pinch = null;
+
+    if(drag){
+      if(drag.moved){ drag.el.classList.remove('dragging'); save(); }
+      drag = null;
+    }
+    if(pan){ pan = null; viewport.classList.remove('panning'); }
+  }
+  viewport.addEventListener('pointerup', endPointer);
+  viewport.addEventListener('pointercancel', endPointer);
+
+  /* pinch-zoom */
+  function twoPts(){ return Array.from(pointers.values()); }
+  function startPinch(){
+    const p = twoPts();
+    const r = viewport.getBoundingClientRect();
+    pinch = {
+      dist: Math.hypot(p[0].x-p[1].x, p[0].y-p[1].y),
+      cx: (p[0].x+p[1].x)/2 - r.left,
+      cy: (p[0].y+p[1].y)/2 - r.top,
+    };
+  }
+  function updatePinch(){
+    const p = twoPts(); if(p.length<2) return;
+    const d = Math.hypot(p[0].x-p[1].x, p[0].y-p[1].y);
+    if(pinch.dist>0) zoomAt(pinch.cx, pinch.cy, d/pinch.dist);
+    pinch.dist = d;
+  }
+
+  /* ── inline text editing ────────────────────────────────────────── */
+  function beginEdit(el){
+    if(!document.body.classList.contains('mode-arrange')) return;
+    el.classList.add('editing');
+    el.contentEditable = 'true';
+    el.focus();
+  }
+  function endEdit(el){
+    el.classList.remove('editing');
+    el.contentEditable = 'false';
+    save();
+  }
+  viewport.addEventListener('dblclick', (e)=>{
+    const t = e.target.closest('.draggable');
+    if(t) beginEdit(t);
+  });
+  document.addEventListener('keydown', (e)=>{
+    if(e.key === 'Escape'){ const ed = editingEl(); if(ed){ ed.blur(); endEdit(ed);} }
+  });
+  // finish editing on blur (e.g. clicking the toolbar)
+  els.forEach(el=>el.addEventListener('blur', ()=>{ if(el.classList.contains('editing')) endEdit(el); }));
+  // typing marks content dirty → autosave
+  stage.addEventListener('input', debounce(save, 500));
+
+  /* ── persistence ────────────────────────────────────────────────── */
+  // capture pristine layout/content BEFORE applying any saved overrides
+  const DEFAULT = els.map(el=>({
+    id: el.id,
+    left: el.style.left, top: el.style.top,
+    html: el.innerHTML,
+  }));
+
+  function save(){
+    const pos = {}, txt = {};
+    els.forEach(el=>{
+      pos[el.id] = {l: el.style.left, t: el.style.top};
+      const d = DEFAULT.find(x=>x.id===el.id);
+      if(d && el.innerHTML !== d.html) txt[el.id] = el.innerHTML;
+    });
+    try{
+      localStorage.setItem(STORE_KEY, JSON.stringify({v:1, pos, txt}));
+      flash('saved');
+    }catch(err){ /* storage may be unavailable */ }
+  }
+  function load(){
+    let data; try{ data = JSON.parse(localStorage.getItem(STORE_KEY)||'null'); }catch(e){ data=null; }
+    if(!data) return;
+    els.forEach(el=>{
+      if(data.txt && data.txt[el.id] != null) el.innerHTML = data.txt[el.id];
+      if(data.pos && data.pos[el.id]){
+        if(data.pos[el.id].l) el.style.left = data.pos[el.id].l;
+        if(data.pos[el.id].t) el.style.top  = data.pos[el.id].t;
+      }
+    });
+  }
+  function resetLayout(){
+    if(!confirm('Reset all boxes and text to the saved default layout? This clears your browser edits.')) return;
+    DEFAULT.forEach(d=>{
+      const el = byId[d.id];
+      el.style.left = d.left; el.style.top = d.top; el.innerHTML = d.html;
+    });
+    localStorage.removeItem(STORE_KEY);
+    redraw(); flash('layout reset');
+  }
+
+  /* ── download standalone copy (current layout baked in) ─────────── */
+  function download(){
+    const ed = editingEl(); if(ed) endEdit(ed);
+    const clone = document.documentElement.cloneNode(true);
+    // neutralise transient UI state in the copy
+    clone.querySelectorAll('.editing').forEach(n=>{n.classList.remove('editing'); n.removeAttribute('contenteditable');});
+    clone.querySelectorAll('.dragging').forEach(n=>n.classList.remove('dragging'));
+    const b = clone.querySelector('body'); if(b){ b.className = 'mode-arrange'; }
+    const hint = clone.querySelector('#hint'); if(hint) hint.classList.remove('hidden');
+    const wt = clone.querySelector('#world');
+    if(wt) wt.removeAttribute('style'); // copy opens at a fresh fitted view
+    const html = '<!DOCTYPE html>\n' + clone.outerHTML;
+    const blob = new Blob([html], {type:'text/html'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'dissertation_map_editable.html';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    flash('downloaded');
+  }
+
+  /* ── toolbar wiring ─────────────────────────────────────────────── */
+  document.getElementById('zoomIn').onclick  = ()=>zoomAt(viewport.clientWidth/2, viewport.clientHeight/2, 1.2);
+  document.getElementById('zoomOut').onclick = ()=>zoomAt(viewport.clientWidth/2, viewport.clientHeight/2, 1/1.2);
+  document.getElementById('fitBtn').onclick  = fit;
+  document.getElementById('resetBtn').onclick = resetLayout;
+  document.getElementById('downloadBtn').onclick = download;
+  document.getElementById('modeBtn').onclick = function(){
+    const arrange = document.body.classList.toggle('mode-arrange');
+    document.body.classList.toggle('mode-view', !arrange);
+    this.textContent = arrange ? 'arrange' : 'view';
+    this.classList.toggle('on', !arrange);
+    const ed = editingEl(); if(ed && !arrange) endEdit(ed);
+  };
+
+  /* ── utilities ──────────────────────────────────────────────────── */
+  function debounce(fn, ms){ let t; return function(){ clearTimeout(t); t=setTimeout(fn, ms); }; }
+  let toastT;
+  function flash(msg){
+    const el = document.getElementById('toast');
+    el.textContent = msg; el.classList.add('show');
+    clearTimeout(toastT); toastT = setTimeout(()=>el.classList.remove('show'), 1100);
+  }
+
+  window.addEventListener('resize', ()=>{ /* keep current cam; just redraw grid math not needed */ });
+
+  /* ── boot ───────────────────────────────────────────────────────── */
+  load();
+  redraw();
+  fit();
+})();
+</script>
+</body>
+</html>
