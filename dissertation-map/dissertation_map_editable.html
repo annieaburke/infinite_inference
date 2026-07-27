@@ -73,9 +73,11 @@
   .version{font-family:"IBM Plex Mono",monospace;font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;color:#999;margin-top:8px}
 
   /* ── interaction affordances ─────────────────────────────────── */
+  .draggable{transition:transform .13s cubic-bezier(.34,1.56,.64,1), box-shadow .13s ease}
   body.mode-arrange .draggable{cursor:grab}
   body.mode-arrange .draggable:hover{outline:1px solid #9db;outline-offset:2px}
   .draggable.dragging{cursor:grabbing;outline:1px solid #4a8!important;outline-offset:2px}
+  .draggable.lift{transform:scale(1.035);z-index:30;box-shadow:0 14px 34px rgba(0,0,0,.20)}
   .draggable.editing{cursor:text;outline:1px dashed #4a8!important;outline-offset:2px;background:#fff}
   .draggable.editing *{cursor:text}
 
@@ -137,8 +139,8 @@
 <!-- ── help card ────────────────────────────────────────────────── -->
 <div id="hint">
   <button class="close" onclick="document.getElementById('hint').classList.add('hidden')">×</button>
-  <b>Drag empty space</b> to pan · <b>scroll / pinch</b> to zoom<br>
-  <b>Drag a box</b> to move it — lines follow<br>
+  <b>Drag empty space</b> to pan (flick to coast) · <b>scroll / pinch</b> to zoom<br>
+  <b>Drag a box</b> — it springs, neighbors nudge aside, lines flex<br>
   <b>Double-click</b> a box to edit its text · <b>Esc</b> to finish<br>
   Edits auto-save in this browser · <b>Download</b> for a standalone copy
 </div>
@@ -189,7 +191,7 @@
   <h3>Resolution</h3>
   <p>model-mediated resolution, invoked at any edit; a spectrum of conditioned resolution — occurs whether or not it is read</p>
 </div>
-<div id="arr" class="abs box draggable" style="left:536px;top:150px;width:226px;height:185px">
+<div id="arrival" class="abs box draggable" style="left:536px;top:150px;width:226px;height:185px">
   <h3>Arrival</h3>
   <p>what comes back, at the interval — carries more than was asked</p>
 </div>
@@ -365,93 +367,194 @@
   const world    = document.getElementById('world');
   const viewport = document.getElementById('viewport');
   const conns    = document.getElementById('conns');
-  const els       = Array.from(stage.querySelectorAll('.draggable'));
-  const byId      = Object.fromEntries(els.map(e => [e.id, e]));
+  const els      = Array.from(stage.querySelectorAll('.draggable'));
+  const byId     = Object.fromEntries(els.map(e => [e.id, e]));
 
-  /* ── connector definitions (reference box ids) ──────────────────── */
-  // brackets that span a group of boxes, sitting just above them
+  /* ── connector + bracket definitions (reference box ids) ────────── */
   const BRACKETS = [
     {ids:['op']},
-    {ids:['res','arr']},
+    {ids:['res','arrival']},
     {ids:['find','dec','cont']},
     {ids:['object','question','method','terms','statement'], gap:12},
   ];
-  // straight arrows: from one box side to another box side
   const A = (from,fs,to,ts)=>({from,fs,to,ts,type:'straight'});
   const CONNECTORS = [
-    // anatomy chain
-    A('op','right','res','left'), A('res','right','arr','left'),
-    A('arr','right','find','left'), A('find','right','dec','left'),
+    A('op','right','res','left'), A('res','right','arrival','left'),
+    A('arrival','right','find','left'), A('find','right','dec','left'),
     A('dec','right','cont','left'),
-    // decision → the verbs
     A('dec','bottom','verbs','top'),
-    // continuation loops back to operation
     {from:'cont',fs:'bottom',to:'op',ts:'bottom',type:'loop'},
-    // papers → sections
     A('pap-mod','bottom','s1','top'),
     A('pap-spatial','bottom','s3','top'),
     A('pap-spatial','bottom','s4','top'),
     A('pap-frame','bottom','intro','top'),
     A('pap-frame','bottom','s2','top'),
     A('pap-frame','bottom','s5','top'),
-    // section chain
     A('intro','right','s1','left'), A('s1','right','s2','left'),
     A('s2','right','s3','left'), A('s3','right','s4','left'),
     A('s4','right','s5','left'),
   ];
+  CONNECTORS.forEach(c=>{ if(c.type==='straight') c.cp = {x:0,y:0,vx:0,vy:0,init:false}; });
 
-  /* ── geometry helpers ───────────────────────────────────────────── */
-  function geo(el){
-    return {x:el.offsetLeft, y:el.offsetTop, w:el.offsetWidth, h:el.offsetHeight};
-  }
-  function anchor(el, side){
-    const g = geo(el);
+  /* ── capture pristine defaults, then apply saved overrides ──────── */
+  const DEFAULT = els.map(el=>({id:el.id, left:el.style.left, top:el.style.top, html:el.innerHTML}));
+  (function load(){
+    let d; try{ d = JSON.parse(localStorage.getItem(STORE_KEY)||'null'); }catch(e){ d=null; }
+    if(!d) return;
+    els.forEach(el=>{
+      if(d.txt && d.txt[el.id] != null) el.innerHTML = d.txt[el.id];
+      if(d.pos && d.pos[el.id]){
+        if(d.pos[el.id].l) el.style.left = d.pos[el.id].l;
+        if(d.pos[el.id].t) el.style.top  = d.pos[el.id].t;
+      }
+    });
+  })();
+
+  /* ── particles: one per movable element ─────────────────────────── */
+  const P = els.map(el=>{
+    const x = parseFloat(el.style.left)||0, y = parseFloat(el.style.top)||0;
+    return {el, id:el.id, x, y, vx:0, vy:0, hx:x, hy:y,
+            w:el.offsetWidth, h:el.offsetHeight,
+            pinned:false, collide:el.matches('.box,.panel,.banner')};
+  });
+  const pById = Object.fromEntries(P.map(p=>[p.id,p]));
+
+  /* ── physics constants (underdamped = visible bounce) ───────────── */
+  const HOME_K = 0.10, DAMP = 0.86;     // box spring toward its home
+  const CP_K   = 0.30, CP_DAMP = 0.70;  // connector rubber-band midpoint
+  const COL_PAD = 6,   COL_SOFT = 0.5;  // soft collision separation
+  const VMAX = 40;                      // clamp release velocity
+  const SLEEP = 0.02;  let sleepy = 0;
+
+  /* ── geometry ───────────────────────────────────────────────────── */
+  function anchor(p, side){
     switch(side){
-      case 'left':   return [g.x,        g.y + g.h/2];
-      case 'right':  return [g.x + g.w,  g.y + g.h/2];
-      case 'top':    return [g.x + g.w/2,g.y];
-      case 'bottom': return [g.x + g.w/2,g.y + g.h];
-      default:       return [g.x + g.w/2,g.y + g.h/2];
+      case 'left':   return [p.x,        p.y + p.h/2];
+      case 'right':  return [p.x + p.w,  p.y + p.h/2];
+      case 'top':    return [p.x + p.w/2,p.y];
+      case 'bottom': return [p.x + p.w/2,p.y + p.h];
+      default:       return [p.x + p.w/2,p.y + p.h/2];
     }
   }
-  // pull a point a few px toward/away from a box edge along axis
-  function inset(p, side, d){
-    if(side==='left')   return [p[0]+d, p[1]];
-    if(side==='right')  return [p[0]-d, p[1]];
-    if(side==='top')    return [p[0], p[1]+d];
-    if(side==='bottom') return [p[0], p[1]-d];
-    return p;
+  function inset(pt, side, d){
+    if(side==='left')   return [pt[0]+d, pt[1]];
+    if(side==='right')  return [pt[0]-d, pt[1]];
+    if(side==='top')    return [pt[0], pt[1]+d];
+    if(side==='bottom') return [pt[0], pt[1]-d];
+    return pt;
+  }
+  function ends(c){
+    const a = pById[c.from], z = pById[c.to];
+    return [inset(anchor(a,c.fs), c.fs, 2), inset(anchor(z,c.ts), c.ts, 2)];
   }
 
   function redraw(){
     const parts = [];
-    // brackets
     for(const b of BRACKETS){
-      const gs = b.ids.map(id=>geo(byId[id]));
+      const gs = b.ids.map(id=>pById[id]);
       const x1 = Math.min(...gs.map(g=>g.x));
       const x2 = Math.max(...gs.map(g=>g.x+g.w));
       const y  = Math.min(...gs.map(g=>g.y)) - (b.gap||10);
-      const t  = 6;
-      parts.push(`<path d="M${x1} ${y} v${t} M${x1} ${y} H${x2} M${x2} ${y} v${t}"/>`);
+      parts.push(`<path d="M${x1} ${y} v6 M${x1} ${y} H${x2} M${x2} ${y} v6"/>`);
     }
-    // connectors
     for(const c of CONNECTORS){
-      const a = byId[c.from], z = byId[c.to];
-      if(!a || !z) continue;
-      let p1 = inset(anchor(a, c.fs), c.fs, 2);
-      let p2 = inset(anchor(z, c.ts), c.ts, 2);
+      if(!pById[c.from] || !pById[c.to]) continue;
+      const [p1,p2] = ends(c);
       if(c.type==='loop'){
         const lane = Math.max(p1[1], p2[1]) + 46;
         parts.push(`<path d="M${p1[0]} ${p1[1]} V${lane} H${p2[0]} V${p2[1]}" marker-end="url(#arr)"/>`);
       } else {
-        parts.push(`<path d="M${p1[0]} ${p1[1]} L${p2[0]} ${p2[1]}" marker-end="url(#arr)"/>`);
+        const cp = c.cp;
+        parts.push(`<path d="M${p1[0].toFixed(1)} ${p1[1].toFixed(1)} Q${cp.x.toFixed(1)} ${cp.y.toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}" marker-end="url(#arr)"/>`);
       }
     }
     conns.innerHTML = parts.join('');
   }
+  function initCPs(){
+    for(const c of CONNECTORS){
+      if(c.type!=='straight') continue;
+      const [p1,p2] = ends(c);
+      c.cp.x = (p1[0]+p2[0])/2; c.cp.y = (p1[1]+p2[1])/2;
+      c.cp.vx = c.cp.vy = 0; c.cp.init = true;
+    }
+  }
+
+  /* ── physics step ───────────────────────────────────────────────── */
+  function step(){
+    let energy = 0;
+    // spring boxes toward home
+    for(const p of P){
+      if(p.pinned){ energy += p.vx*p.vx + p.vy*p.vy; continue; }
+      p.vx = (p.vx + (p.hx - p.x)*HOME_K) * DAMP;
+      p.vy = (p.vy + (p.hy - p.y)*HOME_K) * DAMP;
+      p.x += p.vx; p.y += p.vy;
+      energy += p.vx*p.vx + p.vy*p.vy;
+    }
+    // collision: the box you're dragging shoves others aside; they spring back.
+    // Only the active box pushes — so at rest nothing fights the home springs
+    // (boxes may overlap freely once dropped, and the sim can fall asleep).
+    for(const a of P){
+      if(!a.pushing || !a.collide) continue;
+      for(const b of P){
+        if(b === a || !b.collide || b.pinned) continue;
+        const ox = Math.min(a.x+a.w,b.x+b.w) - Math.max(a.x,b.x) + COL_PAD;
+        const oy = Math.min(a.y+a.h,b.y+b.h) - Math.max(a.y,b.y) + COL_PAD;
+        if(ox>0 && oy>0){
+          if(ox < oy){
+            const dir = (b.x+b.w/2) < (a.x+a.w/2) ? -1 : 1;
+            b.x += dir*ox*COL_SOFT; b.vx += dir*ox*COL_SOFT*0.4;
+          } else {
+            const dir = (b.y+b.h/2) < (a.y+a.h/2) ? -1 : 1;
+            b.y += dir*oy*COL_SOFT; b.vy += dir*oy*COL_SOFT*0.4;
+          }
+        }
+      }
+    }
+    // rubber-band the connector midpoints toward their true midpoint
+    for(const c of CONNECTORS){
+      if(c.type!=='straight') continue;
+      if(!pById[c.from] || !pById[c.to]) continue;
+      const [p1,p2] = ends(c);
+      const mx = (p1[0]+p2[0])/2, my = (p1[1]+p2[1])/2;
+      const cp = c.cp;
+      if(!cp.init){ cp.x=mx; cp.y=my; cp.init=true; }
+      cp.vx = (cp.vx + (mx-cp.x)*CP_K) * CP_DAMP;
+      cp.vy = (cp.vy + (my-cp.y)*CP_K) * CP_DAMP;
+      cp.x += cp.vx; cp.y += cp.vy;
+      energy += cp.vx*cp.vx + cp.vy*cp.vy;
+    }
+    // camera inertia (flick-to-coast panning)
+    if(Math.abs(camVel.x)>0.02 || Math.abs(camVel.y)>0.02){
+      cam.x += camVel.x; cam.y += camVel.y;
+      camVel.x *= 0.9; camVel.y *= 0.9;
+      applyCam();
+      energy += camVel.x*camVel.x + camVel.y*camVel.y;
+    } else { camVel.x = camVel.y = 0; }
+    // commit box positions to the DOM
+    for(const p of P){ p.el.style.left = p.x.toFixed(2)+'px'; p.el.style.top = p.y.toFixed(2)+'px'; }
+    redraw();
+    return energy;
+  }
+
+  /* ── animation loop with sleep/wake ─────────────────────────────── */
+  let running = false;
+  function anyPinned(){ return P.some(p=>p.pinned); }
+  function wake(){ sleepy = 0; if(!running){ running = true; requestAnimationFrame(frame); } }
+  function frame(){
+    const e = step();
+    if(e < SLEEP && !anyPinned()){
+      if(++sleepy > 8){ running = false; settle(); return; }
+    } else sleepy = 0;
+    requestAnimationFrame(frame);
+  }
+  function settle(){
+    for(const p of P){ p.x = Math.round(p.x); p.y = Math.round(p.y); p.vx = p.vy = 0;
+                       p.el.style.left = p.x+'px'; p.el.style.top = p.y+'px'; }
+    redraw(); save();
+  }
 
   /* ── camera (pan + zoom) ────────────────────────────────────────── */
-  const cam = {x:0, y:0, s:1};
+  const cam = {x:0, y:0, s:1};  const camVel = {x:0, y:0};
   const MIN_S = 0.2, MAX_S = 3;
   function applyCam(){
     world.style.transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.s})`;
@@ -459,220 +562,140 @@
     viewport.style.backgroundSize = `${24*cam.s}px ${24*cam.s}px`;
     document.getElementById('zoomLbl').textContent = Math.round(cam.s*100) + '%';
   }
-  function zoomAt(sx, sy, factor){
-    const ns = Math.max(MIN_S, Math.min(MAX_S, cam.s*factor));
-    const k = ns/cam.s;
-    cam.x = sx - (sx - cam.x)*k;
-    cam.y = sy - (sy - cam.y)*k;
-    cam.s = ns;
-    applyCam();
+  function zoomAt(sx, sy, f){
+    const ns = Math.max(MIN_S, Math.min(MAX_S, cam.s*f)), k = ns/cam.s;
+    cam.x = sx - (sx - cam.x)*k;  cam.y = sy - (sy - cam.y)*k;  cam.s = ns;  applyCam();
   }
   function fit(){
-    const pad = 60;
-    const vw = viewport.clientWidth - pad*2;
-    const vh = viewport.clientHeight - pad*2;
+    const pad = 60, vw = viewport.clientWidth - pad*2, vh = viewport.clientHeight - pad*2;
     const s = Math.max(MIN_S, Math.min(MAX_S, Math.min(vw/1560, vh/1372)));
-    cam.s = s;
-    cam.x = (viewport.clientWidth  - 1560*s)/2;
-    cam.y = (viewport.clientHeight - 1372*s)/2;
-    applyCam();
+    cam.s = s; cam.x = (viewport.clientWidth - 1560*s)/2; cam.y = (viewport.clientHeight - 1372*s)/2; applyCam();
   }
-
-  viewport.addEventListener('wheel', (e)=>{
+  viewport.addEventListener('wheel', e=>{
     e.preventDefault();
     const r = viewport.getBoundingClientRect();
-    const factor = e.deltaY < 0 ? 1.1 : 1/1.1;
-    zoomAt(e.clientX - r.left, e.clientY - r.top, factor);
+    zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY<0 ? 1.1 : 1/1.1);
   }, {passive:false});
+  function s2w(cx, cy){ const r = viewport.getBoundingClientRect();
+    return {x:(cx - r.left - cam.x)/cam.s, y:(cy - r.top - cam.y)/cam.s}; }
 
-  /* ── unified pointer handling: pan / drag / edit ────────────────── */
-  let drag = null;          // active box drag
-  let pan  = null;          // active canvas pan
-  const pointers = new Map();// for pinch
-  let pinch = null;
-  let rafPending = false;
-  function scheduleRedraw(){
-    if(rafPending) return; rafPending = true;
-    requestAnimationFrame(()=>{ rafPending = false; redraw(); });
-  }
-
+  /* ── pointer: pan / drag / edit ─────────────────────────────────── */
+  let drag = null, pan = null; const pointers = new Map(); let pinch = null;
   function editingEl(){ return document.querySelector('.draggable.editing'); }
 
-  viewport.addEventListener('pointerdown', (e)=>{
+  viewport.addEventListener('pointerdown', e=>{
     pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
     if(pointers.size === 2){ startPinch(); pan = null; drag = null; return; }
-
-    const ed = editingEl();
-    const target = e.target.closest('.draggable');
-
-    // clicking inside the element currently being edited → let text selection work
-    if(ed && target === ed) return;
-    // clicking anywhere else finishes an in-progress edit
-    if(ed && target !== ed) endEdit(ed);
-
-    const arrange = document.body.classList.contains('mode-arrange');
-    if(arrange && target){
-      // begin dragging a box
-      drag = {
-        el: target,
-        startX: e.clientX, startY: e.clientY,
-        origLeft: parseFloat(target.style.left) || target.offsetLeft,
-        origTop:  parseFloat(target.style.top)  || target.offsetTop,
-        moved: false,
-      };
-      target.setPointerCapture(e.pointerId);
-      e.preventDefault();
+    const ed = editingEl(), t = e.target.closest('.draggable');
+    if(ed && t === ed) return;              // let text selection happen
+    if(ed && t !== ed) endEdit(ed);
+    if(document.body.classList.contains('mode-arrange') && t){
+      const p = pById[t.id], w = s2w(e.clientX, e.clientY);
+      drag = {p, gx:w.x - p.x, gy:w.y - p.y, moved:false};
+      p.pinned = true; p.pushing = true; p.vx = p.vy = 0;
+      t.setPointerCapture(e.pointerId); t.classList.add('lift');
+      camVel.x = camVel.y = 0; wake(); e.preventDefault();
     } else {
-      // begin panning the canvas
-      pan = {startX:e.clientX, startY:e.clientY, camX:cam.x, camY:cam.y};
-      viewport.classList.add('panning');
+      pan = {sx:e.clientX, sy:e.clientY, cx:cam.x, cy:cam.y, lx:e.clientX, ly:e.clientY};
+      camVel.x = camVel.y = 0; viewport.classList.add('panning');
     }
   });
-
-  viewport.addEventListener('pointermove', (e)=>{
+  viewport.addEventListener('pointermove', e=>{
     if(pointers.has(e.pointerId)) pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
-
     if(pinch){ updatePinch(); return; }
-
     if(drag){
-      const dx = (e.clientX - drag.startX)/cam.s;
-      const dy = (e.clientY - drag.startY)/cam.s;
-      if(!drag.moved && Math.hypot(e.clientX-drag.startX, e.clientY-drag.startY) > 3){
-        drag.moved = true;
-        drag.el.classList.add('dragging');
-      }
-      if(drag.moved){
-        drag.el.style.left = Math.round(drag.origLeft + dx) + 'px';
-        drag.el.style.top  = Math.round(drag.origTop  + dy) + 'px';
-        scheduleRedraw();
-      }
-      return;
-    }
-    if(pan){
-      cam.x = pan.camX + (e.clientX - pan.startX);
-      cam.y = pan.camY + (e.clientY - pan.startY);
-      applyCam();
+      const w = s2w(e.clientX, e.clientY), p = drag.p;
+      const nx = w.x - drag.gx, ny = w.y - drag.gy;
+      if(!drag.moved && Math.hypot(nx-p.x, ny-p.y) > 1){ drag.moved = true; p.el.classList.add('dragging'); }
+      p.vx = nx - p.x; p.vy = ny - p.y;     // carry momentum for release bounce
+      p.x = nx; p.y = ny; wake();
+    } else if(pan){
+      cam.x = pan.cx + (e.clientX - pan.sx); cam.y = pan.cy + (e.clientY - pan.sy);
+      camVel.x = e.clientX - pan.lx; camVel.y = e.clientY - pan.ly;
+      pan.lx = e.clientX; pan.ly = e.clientY; applyCam();
     }
   });
-
   function endPointer(e){
     pointers.delete(e.pointerId);
     if(pointers.size < 2 && pinch) pinch = null;
-
     if(drag){
-      if(drag.moved){ drag.el.classList.remove('dragging'); save(); }
-      drag = null;
+      const p = drag.p; p.pinned = false; p.pushing = false;
+      p.hx = p.x; p.hy = p.y;               // dropped position becomes new home
+      p.vx = Math.max(-VMAX, Math.min(VMAX, p.vx));
+      p.vy = Math.max(-VMAX, Math.min(VMAX, p.vy));
+      p.el.classList.remove('dragging', 'lift');
+      drag = null; wake();                  // settle with a bounce
     }
-    if(pan){ pan = null; viewport.classList.remove('panning'); }
+    if(pan){ pan = null; viewport.classList.remove('panning');
+      if(Math.hypot(camVel.x, camVel.y) > 0.5) wake(); }
   }
   viewport.addEventListener('pointerup', endPointer);
   viewport.addEventListener('pointercancel', endPointer);
 
-  /* pinch-zoom */
   function twoPts(){ return Array.from(pointers.values()); }
-  function startPinch(){
-    const p = twoPts();
-    const r = viewport.getBoundingClientRect();
-    pinch = {
-      dist: Math.hypot(p[0].x-p[1].x, p[0].y-p[1].y),
-      cx: (p[0].x+p[1].x)/2 - r.left,
-      cy: (p[0].y+p[1].y)/2 - r.top,
-    };
-  }
-  function updatePinch(){
-    const p = twoPts(); if(p.length<2) return;
+  function startPinch(){ const p = twoPts(), r = viewport.getBoundingClientRect();
+    pinch = {dist:Math.hypot(p[0].x-p[1].x, p[0].y-p[1].y),
+             cx:(p[0].x+p[1].x)/2 - r.left, cy:(p[0].y+p[1].y)/2 - r.top}; }
+  function updatePinch(){ const p = twoPts(); if(p.length<2) return;
     const d = Math.hypot(p[0].x-p[1].x, p[0].y-p[1].y);
-    if(pinch.dist>0) zoomAt(pinch.cx, pinch.cy, d/pinch.dist);
-    pinch.dist = d;
-  }
+    if(pinch.dist>0) zoomAt(pinch.cx, pinch.cy, d/pinch.dist); pinch.dist = d; }
 
   /* ── inline text editing ────────────────────────────────────────── */
   function beginEdit(el){
     if(!document.body.classList.contains('mode-arrange')) return;
-    el.classList.add('editing');
-    el.contentEditable = 'true';
-    el.focus();
+    const p = pById[el.id]; p.pinned = true; p.vx = p.vy = 0;
+    el.classList.add('editing'); el.contentEditable = 'true'; el.focus();
   }
   function endEdit(el){
-    el.classList.remove('editing');
-    el.contentEditable = 'false';
-    save();
+    el.classList.remove('editing'); el.contentEditable = 'false';
+    const p = pById[el.id]; if(p){ p.pinned = false; p.w = el.offsetWidth; p.h = el.offsetHeight; }
+    wake(); save();
   }
-  viewport.addEventListener('dblclick', (e)=>{
-    const t = e.target.closest('.draggable');
-    if(t) beginEdit(t);
-  });
-  document.addEventListener('keydown', (e)=>{
-    if(e.key === 'Escape'){ const ed = editingEl(); if(ed){ ed.blur(); endEdit(ed);} }
-  });
-  // finish editing on blur (e.g. clicking the toolbar)
+  viewport.addEventListener('dblclick', e=>{ const t = e.target.closest('.draggable'); if(t) beginEdit(t); });
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ const ed = editingEl(); if(ed){ ed.blur(); endEdit(ed); } } });
   els.forEach(el=>el.addEventListener('blur', ()=>{ if(el.classList.contains('editing')) endEdit(el); }));
-  // typing marks content dirty → autosave
-  stage.addEventListener('input', debounce(save, 500));
+  stage.addEventListener('input', debounce(()=>{
+    const ed = editingEl(); if(ed){ const p = pById[ed.id]; p.w = ed.offsetWidth; p.h = ed.offsetHeight; }
+    redraw(); save();
+  }, 400));
 
   /* ── persistence ────────────────────────────────────────────────── */
-  // capture pristine layout/content BEFORE applying any saved overrides
-  const DEFAULT = els.map(el=>({
-    id: el.id,
-    left: el.style.left, top: el.style.top,
-    html: el.innerHTML,
-  }));
-
   function save(){
     const pos = {}, txt = {};
-    els.forEach(el=>{
-      pos[el.id] = {l: el.style.left, t: el.style.top};
-      const d = DEFAULT.find(x=>x.id===el.id);
-      if(d && el.innerHTML !== d.html) txt[el.id] = el.innerHTML;
+    P.forEach(p=>{
+      pos[p.id] = {l:Math.round(p.hx)+'px', t:Math.round(p.hy)+'px'};
+      const d = DEFAULT.find(x=>x.id===p.id);
+      if(d && p.el.innerHTML !== d.html) txt[p.id] = p.el.innerHTML;
     });
-    try{
-      localStorage.setItem(STORE_KEY, JSON.stringify({v:1, pos, txt}));
-      flash('saved');
-    }catch(err){ /* storage may be unavailable */ }
-  }
-  function load(){
-    let data; try{ data = JSON.parse(localStorage.getItem(STORE_KEY)||'null'); }catch(e){ data=null; }
-    if(!data) return;
-    els.forEach(el=>{
-      if(data.txt && data.txt[el.id] != null) el.innerHTML = data.txt[el.id];
-      if(data.pos && data.pos[el.id]){
-        if(data.pos[el.id].l) el.style.left = data.pos[el.id].l;
-        if(data.pos[el.id].t) el.style.top  = data.pos[el.id].t;
-      }
-    });
+    try{ localStorage.setItem(STORE_KEY, JSON.stringify({v:1, pos, txt})); flash('saved'); }catch(e){}
   }
   function resetLayout(){
-    if(!confirm('Reset all boxes and text to the saved default layout? This clears your browser edits.')) return;
-    DEFAULT.forEach(d=>{
-      const el = byId[d.id];
-      el.style.left = d.left; el.style.top = d.top; el.innerHTML = d.html;
-    });
+    if(!confirm('Reset all boxes and text to the default layout? This clears your browser edits.')) return;
+    DEFAULT.forEach(d=>{ byId[d.id].innerHTML = d.html; });
+    P.forEach(p=>{ const d = DEFAULT.find(x=>x.id===p.id);
+      p.hx = parseFloat(d.left)||0; p.hy = parseFloat(d.top)||0;
+      p.w = p.el.offsetWidth; p.h = p.el.offsetHeight; p.vx = p.vy = 0; });
     localStorage.removeItem(STORE_KEY);
-    redraw(); flash('layout reset');
+    wake(); flash('layout reset');
   }
 
-  /* ── download standalone copy (current layout baked in) ─────────── */
+  /* ── download a standalone copy (current layout baked in) ───────── */
   function download(){
     const ed = editingEl(); if(ed) endEdit(ed);
+    P.forEach(p=>{ p.el.style.left = Math.round(p.hx)+'px'; p.el.style.top = Math.round(p.hy)+'px'; });
     const clone = document.documentElement.cloneNode(true);
-    // neutralise transient UI state in the copy
-    clone.querySelectorAll('.editing').forEach(n=>{n.classList.remove('editing'); n.removeAttribute('contenteditable');});
-    clone.querySelectorAll('.dragging').forEach(n=>n.classList.remove('dragging'));
-    const b = clone.querySelector('body'); if(b){ b.className = 'mode-arrange'; }
+    clone.querySelectorAll('.editing').forEach(n=>{ n.classList.remove('editing'); n.removeAttribute('contenteditable'); });
+    clone.querySelectorAll('.dragging,.lift').forEach(n=>n.classList.remove('dragging','lift'));
+    const b = clone.querySelector('body'); if(b) b.className = 'mode-arrange';
     const hint = clone.querySelector('#hint'); if(hint) hint.classList.remove('hidden');
-    const wt = clone.querySelector('#world');
-    if(wt) wt.removeAttribute('style'); // copy opens at a fresh fitted view
-    const html = '<!DOCTYPE html>\n' + clone.outerHTML;
-    const blob = new Blob([html], {type:'text/html'});
+    const wt = clone.querySelector('#world'); if(wt) wt.removeAttribute('style');
+    const blob = new Blob(['<!DOCTYPE html>\n' + clone.outerHTML], {type:'text/html'});
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'dissertation_map_editable.html';
-    a.click();
-    URL.revokeObjectURL(a.href);
-    flash('downloaded');
+    a.href = URL.createObjectURL(blob); a.download = 'dissertation_map_editable.html'; a.click();
+    URL.revokeObjectURL(a.href); flash('downloaded');
   }
 
-  /* ── toolbar wiring ─────────────────────────────────────────────── */
+  /* ── toolbar ────────────────────────────────────────────────────── */
   document.getElementById('zoomIn').onclick  = ()=>zoomAt(viewport.clientWidth/2, viewport.clientHeight/2, 1.2);
   document.getElementById('zoomOut').onclick = ()=>zoomAt(viewport.clientWidth/2, viewport.clientHeight/2, 1/1.2);
   document.getElementById('fitBtn').onclick  = fit;
@@ -687,20 +710,16 @@
   };
 
   /* ── utilities ──────────────────────────────────────────────────── */
-  function debounce(fn, ms){ let t; return function(){ clearTimeout(t); t=setTimeout(fn, ms); }; }
+  function debounce(fn, ms){ let t; return function(){ clearTimeout(t); t = setTimeout(fn, ms); }; }
   let toastT;
-  function flash(msg){
-    const el = document.getElementById('toast');
+  function flash(msg){ const el = document.getElementById('toast');
     el.textContent = msg; el.classList.add('show');
-    clearTimeout(toastT); toastT = setTimeout(()=>el.classList.remove('show'), 1100);
-  }
+    clearTimeout(toastT); toastT = setTimeout(()=>el.classList.remove('show'), 1000); }
 
-  window.addEventListener('resize', ()=>{ /* keep current cam; just redraw grid math not needed */ });
+  window.addEventListener('resize', ()=>{});
 
   /* ── boot ───────────────────────────────────────────────────────── */
-  load();
-  redraw();
-  fit();
+  initCPs(); redraw(); fit();
 })();
 </script>
 </body>
